@@ -404,5 +404,14 @@
             "locate": "Could not locate the text to edit — try rephrasing"
         },
         "localSelf": "Me"
+    },
+    "tabs": {
+        "newTab": "New tab",
+        "closeTab": "Close tab",
+        "shrinkToFit": "Shrink to fit",
+        "scrollHorizontally": "Scroll horizontally",
+        "untitled": "Untitled.md",
+        "unsavedTitle": "Unsaved changes",
+        "unsavedBody": "Save changes to “{{name}}” before closing?"
     }
 }

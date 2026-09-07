@@ -437,6 +437,52 @@ static WIN_ID: AtomicU32 = AtomicU32::new(0);
 
 pub struct WindowFiles(pub Mutex<HashMap<String, String>>);
 
+/// Every file path open as a TAB in each window, pushed from the frontend
+/// whenever the tab set changes.
+///
+/// `WindowFiles` records one path per window — the document the window was
+/// last assigned — which is no longer the whole story now that a window can
+/// hold several. Two things read this instead:
+///
+///  * `open_or_reuse`, so opening a file already present in some window's tab
+///    strip focuses that window and activates the tab rather than opening a
+///    duplicate;
+///  * the file watcher, so background tabs are watched too and not just the
+///    window's last-assigned document.
+pub struct WindowTabs(pub Mutex<HashMap<String, Vec<String>>>);
+
+impl WindowTabs {
+    pub fn set(&self, label: &str, paths: Vec<String>) {
+        self.0.lock().unwrap().insert(label.to_string(), paths);
+    }
+
+    pub fn remove(&self, label: &str) {
+        self.0.lock().unwrap().remove(label);
+    }
+
+    /// The window holding this path in a tab, if any.
+    pub fn find_window_with_path(&self, path: &str) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, paths)| paths.iter().any(|p| p == path))
+            .map(|(label, _)| label.clone())
+    }
+
+    /// Snapshot of (window label, tab path) pairs — used by the watcher.
+    pub fn entries(&self) -> Vec<(String, String)> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(label, paths)| {
+                paths.iter().map(move |p| (label.clone(), p.clone()))
+            })
+            .collect()
+    }
+}
+
 /// Per-window `UntitledDoc` (NSDocument subclass) used to drive the native
 /// "save changes?" sheet for untitled+dirty docs on macOS. Populated lazily
 /// on close request, cleared when the close flow resolves.
@@ -793,6 +839,24 @@ fn update_content(
     state.set(window.label(), content, is_dirty);
 }
 
+/// FE pushes the paths of all open tabs whenever the tab set changes.
+#[tauri::command]
+fn update_tabs(window: Window, state: State<WindowTabs>, paths: Vec<String>) {
+    state.set(window.label(), paths);
+}
+
+/// Drop this window's assigned path — the counterpart to `set_window_path`.
+///
+/// With tabs the assignment tracks the ACTIVE document, so activating a
+/// never-saved tab has to clear it. The close flow reads this to decide
+/// whether a window can close silently (a saved document autosaves; an
+/// untitled one needs the "save changes?" sheet), and leaving a stale path
+/// behind would let unsaved work disappear without a prompt.
+#[tauri::command]
+fn clear_window_path(window: Window, state: State<WindowFiles>) {
+    state.0.lock().unwrap().remove(window.label());
+}
+
 // ── window helpers ────────────────────────────────────────────────────────────
 
 pub(crate) fn new_empty_window(app: &AppHandle) -> String {
@@ -942,17 +1006,32 @@ fn notify_user(title: &str, body: &str) {
 /// telling the caller whether that window was already showing this file
 /// (so the AI agent knows "I just opened this" vs "user was already on it").
 pub(crate) fn open_or_reuse(app: &AppHandle, path: String) -> OpenOutcome {
-    let filename = std::path::Path::new(&path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("DOMD")
-        .to_string();
+    let all_windows = app.webview_windows();
+
+    // Already open as a tab somewhere: focus that window and activate the tab.
+    let tabs = app.state::<WindowTabs>();
+    if let Some(label) = tabs.find_window_with_path(&path) {
+        if let Some(win) = all_windows.get(&label) {
+            if win.is_minimized().unwrap_or(false) {
+                let _ = win.unminimize();
+            }
+            let _ = win.set_focus();
+            let _ = app.emit_to(label.as_str(), "activate-tab", &path);
+            return OpenOutcome {
+                window_id: label,
+                was_already_open: true,
+            };
+        }
+        // Window is gone but the entry lingers — fall through and re-open.
+        tabs.remove(&label);
+    }
 
     let state = app.state::<WindowFiles>();
     let mut files = state.0.lock().unwrap();
-    let all_windows = app.webview_windows();
 
-    // If this file is already open, just focus that window
+    // Same check against the per-window assignment. Still needed: a window
+    // gets its path from `set_window_path` (save-as, drag-drop) before the
+    // frontend's tab push lands, so this is the authority in that gap.
     if let Some(label) = files.iter().find(|(_, p)| p.as_str() == path).map(|(l, _)| l.clone()) {
         if let Some(win) = all_windows.get(&label) {
             drop(files);
@@ -960,6 +1039,7 @@ pub(crate) fn open_or_reuse(app: &AppHandle, path: String) -> OpenOutcome {
                 let _ = win.unminimize();
             }
             let _ = win.set_focus();
+            let _ = app.emit_to(label.as_str(), "activate-tab", &path);
             return OpenOutcome {
                 window_id: label,
                 was_already_open: true,
@@ -968,33 +1048,59 @@ pub(crate) fn open_or_reuse(app: &AppHandle, path: String) -> OpenOutcome {
         // Window was closed but entry remains — remove stale entry and continue
         files.remove(&label);
     }
+    drop(files);
 
-    // Find any open window that hasn't been assigned a file yet
-    let empty_label = all_windows
+    // Not open anywhere: hand it to an existing window as a NEW TAB rather
+    // than spawning another window (that was the one-doc-per-window model).
+    // Prefer the focused window so the file lands where the user is looking.
+    //
+    // Both the focused lookup and the fallback walk a deterministic order:
+    // `webview_windows()` returns a HashMap, so iterating it directly picks an
+    // arbitrary window whenever no window reports focus (or, in principle,
+    // when more than one does). Labels are `w<N>` in creation order, so
+    // sorting on that index makes the fallback "the most recently opened
+    // window" rather than whatever the hash happened to yield.
+    let mut labels: Vec<String> = all_windows.keys().cloned().collect();
+    labels.sort_by_key(|label| {
+        label
+            .trim_start_matches('w')
+            .parse::<u32>()
+            .unwrap_or(u32::MAX)
+    });
+    let target_label = labels
         .iter()
-        .find(|(label, _)| !files.contains_key(label.as_str()))
-        .map(|(label, _)| label.clone());
+        .find(|label| {
+            all_windows
+                .get(*label)
+                .map(|w| w.is_focused().unwrap_or(false))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .or_else(|| labels.last().cloned());
 
-    if let Some(label) = empty_label {
-        files.insert(label.clone(), path.clone());
-        drop(files);
-        // Unmark ready: the empty window was ready, but now we're loading new
-        // content into it; the AI shouldn't see "ready" until the new content
-        // is rendered. benchmark_mark_ready fires again post-mount.
+    if let Some(label) = target_label {
+        // The window is about to display a DIFFERENT document, so it is no
+        // longer ready in the sense the CLI cares about. `benchmark_mark_ready`
+        // fires on every editor mount, not just the first, and routing a file
+        // into a tab remounts the editor — so clearing here is both correct
+        // and self-healing. Without it, `domd-cli open` followed immediately
+        // by `insert` races: readiness is still true from the PREVIOUS
+        // document and the insert lands in the wrong one.
         app.state::<WindowReady>().remove(&label);
-        if let Some(win) = app.webview_windows().get(&label) {
-            let _ = win.set_title(&filename);
+        let _ = app.emit_to(label.as_str(), "open-file-in-tab", &path);
+        if let Some(win) = all_windows.get(&label) {
+            if win.is_minimized().unwrap_or(false) {
+                let _ = win.unminimize();
+            }
             let _ = win.set_focus();
-            let _ = win.emit_to(label.as_str(), "open-file", &path);
         }
         return OpenOutcome {
             window_id: label,
             was_already_open: false,
         };
     }
-    drop(files);
 
-    // All windows already have files — open a new one
+    // No windows at all — create one for this file.
     let label = open_file_window(app, path);
     OpenOutcome {
         window_id: label,
@@ -1240,7 +1346,8 @@ pub fn run() {
         .manage(WindowFiles(Mutex::new(HashMap::new())))
         .manage(WindowReady(Mutex::new(HashMap::new())))
         .manage(WindowSelections(Mutex::new(HashMap::new())))
-        .manage(WindowContents(Mutex::new(HashMap::new())));
+        .manage(WindowContents(Mutex::new(HashMap::new())))
+        .manage(WindowTabs(Mutex::new(HashMap::new())));
     #[cfg(target_os = "macos")]
     let builder = builder.manage(WindowDocs(Mutex::new(HashMap::new())));
     let app = builder
@@ -1255,6 +1362,8 @@ pub fn run() {
             read_file_bytes,
             update_selection,
             update_content,
+            update_tabs,
+            clear_window_path,
             get_system_locale,
             set_locale,
             set_collab_state,
@@ -1316,6 +1425,7 @@ pub fn run() {
                     app.state::<WindowReady>().remove(&label);
                     app.state::<WindowSelections>().remove(&label);
                     app.state::<WindowContents>().remove(&label);
+                    app.state::<WindowTabs>().remove(&label);
                     #[cfg(target_os = "macos")]
                     {
                         app.state::<WindowDocs>().0.lock().unwrap().remove(&label);
@@ -1358,13 +1468,23 @@ pub fn run() {
             *MENU_LOCALE.lock().unwrap() = Some(startup_locale);
 
             app.on_menu_event(|app, event| {
+                // Cmd+N / Cmd+W act on TABS when a window is focused, and fall
+                // back to window granularity when none is (e.g. the app is
+                // active with every window closed). The frontend decides what
+                // closing the last tab means — see the domd-close-tab handler.
                 if event.id() == "new-window" {
-                    new_empty_window(app);
+                    if let Some(win) = app.webview_windows().values().find(|w| {
+                        w.is_focused().unwrap_or(false)
+                    }) {
+                        let _ = win.emit_to(win.label(), "menu-new-tab", ());
+                    } else {
+                        new_empty_window(app);
+                    }
                 } else if event.id() == "close-window" {
                     if let Some(win) = app.webview_windows().values().find(|w| {
                         w.is_focused().unwrap_or(false)
                     }) {
-                        let _ = win.close();
+                        let _ = win.emit_to(win.label(), "menu-close-tab", ());
                     }
                 } else if event.id() == "undo"
                     || event.id() == "redo"

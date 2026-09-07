@@ -80,6 +80,10 @@ import { ModeController } from "./mode-controller";
 import { NewDocModal } from "./new-doc-modal";
 import { ImageDropHandler } from "../hooks/use-image-drop";
 import { useDocumentLoaders } from "../hooks/use-document-loaders";
+import { useTabs } from "../hooks/use-tabs";
+import { TabStoreProvider } from "../stores/tab-store";
+import { TabBar } from "./tab-bar";
+import { TabEditorBridge } from "./tab-editor-bridge";
 import { useTauriDragDrop } from "../hooks/use-tauri-drag-drop";
 import { useTauriEvent } from "../hooks/use-tauri-event";
 import { useWebDragDrop } from "../hooks/use-web-drag-drop";
@@ -257,9 +261,16 @@ export function EditorApp() {
     // bridge, the drawer overlay — reaches the same store without threading
     // callbacks through props (claude-os nav-drawer pattern).
     return (
-        <SidePanelProvider>
-            <EditorAppContent />
-        </SidePanelProvider>
+        // TabStoreProvider holds the window's open documents and is the
+        // document source for BOTH runtimes (see useDocumentLoaders). Web is
+        // simply the case where nothing ever opens a second tab, which keeps
+        // one editor tree instead of a tabbed copy that has to be kept in
+        // step with this one.
+        <TabStoreProvider>
+            <SidePanelProvider>
+                <EditorAppContent />
+            </SidePanelProvider>
+        </TabStoreProvider>
     );
 }
 
@@ -616,6 +627,18 @@ function EditorAppContent() {
     const isWeb = !useIsTauri();
     const dragging = tauriDragging || webDragging;
 
+    // Tabs are a desktop concept: a window holds several documents, a web page
+    // holds one. Everything below the tab bar is the same editor either way —
+    // useDocumentLoaders reads whichever tab is active, so a switch reaches
+    // the kernel as an ordinary document swap (`key={version}`).
+    const { markActiveTabDirty } = useTabs({
+        enabled: !isWeb,
+        saveRef,
+        // A tab switch retires the previous document exactly as loading a new
+        // file into the window does (see the open-file handler above).
+        onDocumentSwitch: detachSharing,
+    });
+
     if (view === "loading" || meta === null || content === null) {
         // Loading covers ONLY the content area: the top bar (same classes as
         // the real one in Editor) paints immediately so the page never reads
@@ -667,10 +690,16 @@ function EditorAppContent() {
 
     return (
         <div
+            // With tabs the root becomes the column that gives the tab bar its
+            // row; the editor then renders `embedded` (a flex child) instead
+            // of covering the viewport. Without tabs the root stays layout-free
+            // and the editor keeps its own `fixed inset-0`.
+            className={isWeb ? undefined : "fixed inset-0 flex flex-col"}
             onDragOver={isWeb ? dragHandlers.onDragOver : undefined}
             onDragLeave={isWeb ? dragHandlers.onDragLeave : undefined}
             onDrop={isWeb ? dragHandlers.onDrop : undefined}
         >
+            {isWeb ? null : <TabBar />}
             {dragging ? (
                 <div className="fixed inset-0 z-20 flex items-center justify-center bg-accent/90 pointer-events-none">
                     <div className="text-lg font-medium text-accent-content">
@@ -692,6 +721,10 @@ function EditorAppContent() {
                 mode="rich"
             >
                 <ImageDropHandler />
+                {/* Writes the live document back to its tab when this editor
+                    unmounts (a tab switch), and restores its scroll position
+                    on the way in. Inert with a single tab. */}
+                {isWeb ? null : <TabEditorBridge />}
                 {/* Hydrates the persisted display mode + binds Cmd+/ —
                     the "more" menu entry (web) and this keystroke (both
                     runtimes) call the same toggle. */}
@@ -746,6 +779,9 @@ function EditorAppContent() {
                     aiAvailable={isWeb}
                     aiActive={aiEnabled && aiAgents.length > 0}
                     sidePanel={sidePanel}
+                    embedded={!isWeb}
+                    tabId={isWeb ? undefined : version}
+                    onDirtyChange={isWeb ? undefined : markActiveTabDirty}
                 />
                 {/* Local collaboration session while AI is on without a
                     live room: same doc/versioning machinery over a no-op
