@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     EditorContext,
     EditorDomContext,
@@ -28,6 +28,18 @@ import {
 
 const EditorProvider = ({ children }: { children: React.ReactNode }) => {
     const textAreaDomRef = useRef<HTMLDivElement>(null);
+    // The editable root's DOM node mirrored into state, so its arrival and
+    // departure drive the controller effect below. A plain ref cannot: React
+    // never re-renders on ref writes, and this provider does NOT unmount with
+    // the view — under bring-your-own-store a host detaches the render
+    // subtree while the provider (and store) keep living. Keying the
+    // controller to the provider's lifetime left it bound to a dead root
+    // after a re-attach: the fresh contenteditable had no kernel listeners,
+    // edits went through the browser's native path — visible in the DOM,
+    // absent from the model, gone on the next detach.
+    const [textAreaDom, setTextAreaDom] = useState<HTMLDivElement | null>(
+        null,
+    );
     const [editor, setEditor] = useState<EditorController | null>(null);
 
     const editorStore = useEditorStoreApi();
@@ -38,21 +50,35 @@ const EditorProvider = ({ children }: { children: React.ReactNode }) => {
     // Blur intent -> real DOM blur, the exact dual of focusRequest above.
     const blurRequest = useEditorStore((store) => store.blurRequest_);
 
+    // Ref sink for the editable root: keeps the legacy ref object in sync for
+    // every reader of textAreaDomRef, and feeds the state above.
+    const attachTextAreaDom_ = useCallback((el: HTMLDivElement | null) => {
+        textAreaDomRef.current = el;
+        setTextAreaDom(el);
+    }, []);
+
     useEffect(() => {
-        let editorController: EditorController;
-        if (textAreaDomRef.current) {
-            editorController = new EditorController({
-                textAreaDom: textAreaDomRef.current,
-                editorStore: editorStore,
-            })
-            editorController.init_();
-            setEditor(editorController);
-        }
+        if (!textAreaDom) return;
+        const editorController = new EditorController({
+            textAreaDom,
+            editorStore: editorStore,
+        });
+        editorController.init_();
+        setEditor(editorController);
 
         return () => {
-            editorController?.destroy_();
-        }
-    }, [editorStore]);
+            editorController.destroy_();
+            // Between a detach and the next attach there is no live view;
+            // dropping the instance keeps focus/blur intents from poking a
+            // controller whose DOM is gone.
+            setEditor(null);
+        };
+    }, [editorStore, textAreaDom]);
+
+    const domContextValue = useMemo(
+        () => ({ textAreaDomRef, attachTextAreaDom_ }),
+        [attachTextAreaDom_],
+    );
 
     // The initial value 0 means nobody has requested focus yet, so skip it; every
     // later focus() bump lands here.
@@ -67,7 +93,7 @@ const EditorProvider = ({ children }: { children: React.ReactNode }) => {
     }, [blurRequest, editor]);
 
     return (
-        <EditorDomContext.Provider value={{ textAreaDomRef }}>
+        <EditorDomContext.Provider value={domContextValue}>
             <EditorContext.Provider value={editor}>
                 {children}
             </EditorContext.Provider>

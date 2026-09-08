@@ -528,6 +528,14 @@ export interface CheckedTextRef {
 
 export interface EditorDomContextValue {
     textAreaDomRef: RefObject<HTMLDivElement | null>;
+    /** Ref sink the editable root mounts through. Beyond filling
+     *  `textAreaDomRef`, it notifies the provider that the DOM appeared or
+     *  vanished, so the EditorController's lifetime can track the VIEW
+     *  (attach/detach of the render subtree) rather than the provider —
+     *  a provider outliving its view is the normal shape under
+     *  bring-your-own-store. Optional for backward compatibility: absent,
+     *  the plain ref object is used and controller rebinding is skipped. */
+    attachTextAreaDom_?: (el: HTMLDivElement | null) => void;
 }
 
 export type AnyNode = RenderData | ParentRenderData;

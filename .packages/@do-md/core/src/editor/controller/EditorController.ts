@@ -139,7 +139,12 @@ export class EditorController {
     }
 
     public focus() {
-        this._textAreaDom_.focus();
+        // preventScroll: a programmatic focus() on an unfocused editor would
+        // otherwise scroll-into-view the WHOLE contenteditable root — the
+        // browser aligns its top edge, i.e. yanks the viewport to the top of
+        // the document. Focus restores input capability only; where the
+        // viewport sits is owned by the user (and the scroll-memory anchor).
+        this._textAreaDom_.focus({ preventScroll: true });
         // focus() means "restore input focus", and it must **never destroy a live
         // selection the user is holding**. The host app's "click the blank area to
         // focus" callback fires for two gestures with opposite intent; tell them

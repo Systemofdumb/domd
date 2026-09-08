@@ -19,7 +19,11 @@ function RootElement({ parsedData }: Props) {
         <div
             {...props}
             data-domd-root=""
-            ref={domContext?.textAreaDomRef}
+            // Mount through the provider's ref sink so the controller can
+            // rebind when the view detaches and re-attaches over a live
+            // store; the plain ref object is the legacy fallback for context
+            // values that predate the sink.
+            ref={domContext?.attachTextAreaDom_ ?? domContext?.textAreaDomRef}
             contentEditable={isEditable}
             spellCheck={false}
             tabIndex={0}
