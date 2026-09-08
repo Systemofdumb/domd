@@ -8,11 +8,13 @@
  * document or ten. What changed is where the result lands: the active tab
  * instead of local React state.
  *
- * That indirection is the whole point of the tabbed shell. The editor tree
- * upstream builds around `key={version}` already remounts the kernel when a
- * document is replaced; a tab switch is the same event with a different
- * document arriving, so tabs get upstream's editor — collaboration, disk
- * reconciliation, AI, the outline panel — without a parallel copy of it.
+ * That indirection is the whole point of the tabbed shell: tabs get the
+ * upstream editor tree — collaboration, disk reconciliation, AI, the outline
+ * panel — without a parallel copy of it.
+ *
+ * `content` is not returned, because there is no longer a content prop to
+ * return. Each tab owns a live EditorStore and the provider is handed that
+ * store directly, so the document never round-trips through React state.
  */
 import { useCallback } from "react";
 import { isTauri } from "@/common/lib/platform";
@@ -35,12 +37,20 @@ export function useDocumentLoaders() {
     const active = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
     const meta = active?.meta ?? null;
-    const content = active?.content ?? null;
-    /** Editor identity: changes when a different tab becomes active AND when
-     *  the active tab's document is replaced in place (a disk re-read). Both
-     *  must remount the kernel, since initMd is only read on mount. */
-    const version = active ? `${active.id}:${active.docEpoch}` : "loading";
-    const view: View = active ? "editor" : "loading";
+    /** The active tab's live document runtime, handed to DOMDProvider as
+     *  `store`. With it, every construction-time prop is ignored — the
+     *  runtime already carries them. */
+    const runtime = active ? (store.runtimeOf(active.id) ?? null) : null;
+    /** Editor mount identity: the TAB, and nothing more.
+     *
+     *  The provider captures its store once on mount, so switching tabs has
+     *  to remount the view. Replacing the DOCUMENT inside a tab must not —
+     *  that resets the runtime in place, and remounting would discard the
+     *  view state (selection, focus, scroll) the kernel just preserved. The
+     *  old `${id}:${docEpoch}` key did exactly that, which is why the epoch
+     *  is gone along with the serialize-and-remount model it belonged to. */
+    const version = active?.id ?? "loading";
+    const view: View = active && runtime ? "editor" : "loading";
 
     const setMeta = useCallback(
         (next: FileMeta) => {
@@ -135,7 +145,7 @@ export function useDocumentLoaders() {
     return {
         meta,
         setMeta,
-        content,
+        runtime,
         version,
         view,
         applyBlank,

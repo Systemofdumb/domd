@@ -25,13 +25,11 @@ import { useTabStore, useTabStoreApi } from "../stores/tab-store";
 
 export function useTabs({
     enabled,
-    saveRef,
     onDocumentSwitch,
 }: {
     /** Desktop only. Called unconditionally (hooks rule) and inert on web,
      *  where a window is one page holding one document. */
     enabled: boolean;
-    saveRef: React.MutableRefObject<(() => Promise<boolean>) | null>;
     /** Runs when the ACTIVE tab changes — the same teardown upstream does
      *  when a different document loads into the window (detachSharing). The
      *  live collaboration session belongs to the document that was showing,
@@ -43,7 +41,6 @@ export function useTabs({
     const tabs = useTabStore((s) => s.state.tabs);
     const activeTabId = useTabStore((s) => s.state.activeTabId);
     const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
-    const saveRefLatest = useLatest(saveRef);
     const onDocumentSwitchRef = useLatest(onDocumentSwitch);
 
     useTabShortcuts();
@@ -97,8 +94,7 @@ export function useTabs({
      *  the caller may proceed. False means the user cancelled.
      *
      *  Only never-saved documents qualify: a path-backed one is already on
-     *  disk (autosave wrote it, and the outgoing editor flushes again on
-     *  unmount), so closing it silently is correct. */
+     *  disk (autosave wrote it), so closing it silently is correct. */
     const resolveUnsaved = useCallback(
         async (tabId: string): Promise<boolean> => {
             const tab = store.state.tabs.find((tb) => tb.id === tabId);
@@ -112,20 +108,16 @@ export function useTabs({
             );
             if (!shouldSave) return true; // discard
 
-            // The active tab's editor holds the live document; a background
-            // tab's snapshot in the store is authoritative (its editor wrote
-            // it back on the way out). Either way saveDocument opens the
-            // picker, and a cancelled picker cancels the close.
-            if (
-                tabId === store.state.activeTabId &&
-                saveRefLatest.current.current
-            ) {
-                return await saveRefLatest.current.current();
-            }
-            const result = await saveDocument(tab.meta, tab.content);
+            // One path for every tab: the runtime holds the live document
+            // whether or not a view is attached, so a background tab needs no
+            // snapshot and the active tab needs no detour through the mounted
+            // editor's save handle. saveDocument opens the picker, and a
+            // cancelled picker cancels the close.
+            const result = await saveDocument(tab.meta, store.contentOf(tabId));
+            if (result.ok) store.updateTabMeta(tabId, result.meta);
             return result.ok;
         },
-        [store, t, saveRefLatest],
+        [store, t],
     );
 
     // ── New / close, driven by the tab bar, shortcuts and native menu ────

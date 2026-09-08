@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
     DOMDProvider,
+    EditorStore,
     useEditorStore,
     useEditorStoreApi,
     useFormatState,
@@ -83,7 +84,6 @@ import { useDocumentLoaders } from "../hooks/use-document-loaders";
 import { useTabs } from "../hooks/use-tabs";
 import { TabStoreProvider } from "../stores/tab-store";
 import { TabBar } from "./tab-bar";
-import { TabEditorBridge } from "./tab-editor-bridge";
 import { useTauriDragDrop } from "../hooks/use-tauri-drag-drop";
 import { useTauriEvent } from "../hooks/use-tauri-event";
 import { useWebDragDrop } from "../hooks/use-web-drag-drop";
@@ -260,13 +260,34 @@ export function EditorApp() {
     // trigger surface — web top-bar buttons, the native-titlebar event
     // bridge, the drawer overlay — reaches the same store without threading
     // callbacks through props (claude-os nav-drawer pattern).
+    const { t } = useTranslation();
+
+    // Builds the document runtime for a tab. This is the one place the kernel
+    // construction options live now: a tab's store is created here and owned
+    // by the TabStore for the tab's whole life, so these can no longer sit on
+    // DOMDProvider — it ignores every construction prop once handed a store.
+    const createRuntime = useCallback(
+        (initMd: string) =>
+            new EditorStore({
+                editable: true,
+                initMd,
+                placeholder: t("editor.placeholder"),
+                mode: "rich",
+                imageLoader: collabImageLoader,
+                codeTokenizer: tokenize,
+                inlineRules: appInlineRules,
+                codeBeautify: beautify,
+            }),
+        [t],
+    );
+
     return (
-        // TabStoreProvider holds the window's open documents and is the
-        // document source for BOTH runtimes (see useDocumentLoaders). Web is
-        // simply the case where nothing ever opens a second tab, which keeps
-        // one editor tree instead of a tabbed copy that has to be kept in
-        // step with this one.
-        <TabStoreProvider>
+        // TabStoreProvider holds the window's open documents and their live
+        // runtimes, and is the document source for BOTH platforms (see
+        // useDocumentLoaders). Web is simply the case where nothing ever opens
+        // a second tab, which keeps one editor tree instead of a tabbed copy
+        // that has to be kept in step with this one.
+        <TabStoreProvider initialProps={{ createRuntime }}>
             <SidePanelProvider>
                 <EditorAppContent />
             </SidePanelProvider>
@@ -284,7 +305,7 @@ function EditorAppContent() {
     const {
         meta,
         setMeta,
-        content,
+        runtime,
         version,
         view,
         applyBlank,
@@ -633,13 +654,12 @@ function EditorAppContent() {
     // the kernel as an ordinary document swap (`key={version}`).
     const { markActiveTabDirty } = useTabs({
         enabled: !isWeb,
-        saveRef,
         // A tab switch retires the previous document exactly as loading a new
         // file into the window does (see the open-file handler above).
         onDocumentSwitch: detachSharing,
     });
 
-    if (view === "loading" || meta === null || content === null) {
+    if (view === "loading" || meta === null || runtime === null) {
         // Loading covers ONLY the content area: the top bar (same classes as
         // the real one in Editor) paints immediately so the page never reads
         // as a slow full-screen blank. Desktop has no web top bar — the
@@ -708,23 +728,20 @@ function EditorAppContent() {
                 </div>
             ) : null}
 
+            {/* Bring-your-own-store: the view mounts over the active tab's
+                long-lived runtime instead of constructing one from initMd, so
+                a tab switch is an attach rather than a re-parse. Construction
+                props are deliberately absent — the provider ignores them when
+                handed a store, and the runtime already carries them (see
+                createRuntime in EditorApp). `renderComponent` stays: it is
+                view configuration, not document state. Keyed by tab, because
+                the provider captures its store once on mount. */}
             <DOMDProvider
                 key={version}
-                editable={true}
-                placeholder={t("editor.placeholder")}
-                initMd={content}
-                imageLoader={collabImageLoader}
-                codeTokenizer={tokenize}
-                inlineRules={appInlineRules}
-                codeBeautify={beautify}
+                store={runtime}
                 renderComponent={CustomRender}
-                mode="rich"
             >
                 <ImageDropHandler />
-                {/* Writes the live document back to its tab when this editor
-                    unmounts (a tab switch), and restores its scroll position
-                    on the way in. Inert with a single tab. */}
-                {isWeb ? null : <TabEditorBridge />}
                 {/* Hydrates the persisted display mode + binds Cmd+/ —
                     the "more" menu entry (web) and this keystroke (both
                     runtimes) call the same toggle. */}
