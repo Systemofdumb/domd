@@ -84,6 +84,7 @@ import { useDocumentLoaders } from "../hooks/use-document-loaders";
 import { useTabs } from "../hooks/use-tabs";
 import { TabStoreProvider } from "../stores/tab-store";
 import { TabBar } from "./tab-bar";
+import { TabFocusOnSwitch } from "./tab-focus";
 import { useTauriDragDrop } from "../hooks/use-tauri-drag-drop";
 import { useTauriEvent } from "../hooks/use-tauri-event";
 import { useWebDragDrop } from "../hooks/use-web-drag-drop";
@@ -652,7 +653,7 @@ function EditorAppContent() {
     // holds one. Everything below the tab bar is the same editor either way —
     // useDocumentLoaders reads whichever tab is active, so a switch reaches
     // the kernel as an ordinary document swap (`key={version}`).
-    const { markActiveTabDirty } = useTabs({
+    const { markActiveTabDirty, switchedTabs } = useTabs({
         enabled: !isWeb,
         // A tab switch retires the previous document exactly as loading a new
         // file into the window does (see the open-file handler above).
@@ -742,6 +743,11 @@ function EditorAppContent() {
                 renderComponent={CustomRender}
             >
                 <ImageDropHandler />
+                {/* Real DOM focus for the document a tab switch just brought
+                    forward — the kernel binds its key handling to the editable
+                    root, so a document focused only in the model is one where
+                    ⌘Z does nothing. */}
+                {isWeb ? null : <TabFocusOnSwitch enabled={switchedTabs} />}
                 {/* Hydrates the persisted display mode + binds Cmd+/ —
                     the "more" menu entry (web) and this keystroke (both
                     runtimes) call the same toggle. */}

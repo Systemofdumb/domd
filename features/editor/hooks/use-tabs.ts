@@ -9,8 +9,9 @@
  *
  * Web never calls this — one page, one document, no tab bar.
  */
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { isTauri } from "@/common/lib/platform";
 import { tauriCore, tauriDialog } from "@/common/lib/tauri";
 import { useLatest } from "@/common/lib/use-latest";
 import {
@@ -64,9 +65,23 @@ export function useTabs({
         const doc = await readTauriDoc(path);
         if (store.isOnlyBlankTab()) {
             store.replaceTabDoc(store.state.tabs[0].id, doc.meta, doc.content);
-            return;
+        } else {
+            store.addTab(doc.meta, doc.content);
         }
-        store.addTab(doc.meta, doc.content);
+        // Re-arm readiness for the CLI.
+        //
+        // `open_or_reuse` clears WindowReady before routing a file here,
+        // because the window is about to show a different document and an
+        // immediate `insert` must not land in the previous one. That relies on
+        // something re-marking it, and until now the editor remount did.
+        //
+        // Reusing the lone blank tab no longer remounts anything: the runtime
+        // is reset in place precisely so view state survives. So the tab layer
+        // has to say when the document is actually in place — it is the only
+        // party that knows, and it is true for both branches above.
+        if (!isTauri()) return;
+        const { invoke } = await tauriCore();
+        await invoke("benchmark_mark_ready").catch(() => {});
     };
 
     useTauriEvent<string>("open-file-in-tab", (path) => {
@@ -151,13 +166,25 @@ export function useTabs({
 
     // ── A tab switch is a document switch ────────────────────────────────
     // Driven off the store subscription rather than an effect on activeTabId:
-    // the teardown must run once per actual switch, and keying on the tab id
-    // (not the doc id) means switching between two never-saved documents
-    // still detaches.
+    // the teardown must run once per actual switch, keying on the tab id (not
+    // the doc id) so switching between two never-saved documents still
+    // detaches — and it is where the state below belongs too, since a
+    // subscription callback is the sanctioned place to call setState.
+    //
+    // `switchedTabs` drives TabFocusOnSwitch, which puts real DOM focus on the
+    // editor after a switch (see that component for why model-level focus is
+    // not enough). Only this layer knows a mount came from a switch rather
+    // than from opening the window's first document, and the empty -> first
+    // tab transition is not a switch: guarding it keeps upstream's deliberate
+    // no-autofocus behaviour on first load, and stops the initial load from
+    // running a pointless collaboration teardown.
+    const [switchedTabs, setSwitchedTabs] = useState(false);
     useEffect(
         () =>
             store.subscribe((next, prev) => {
+                if (!prev.activeTabId) return;
                 if (next.activeTabId === prev.activeTabId) return;
+                setSwitchedTabs(true);
                 onDocumentSwitchRef.current();
             }),
         [store, onDocumentSwitchRef],
@@ -258,5 +285,5 @@ export function useTabs({
     // people actually take, and saved documents are never at risk because
     // autosave and the switch-time flush have already written them.
 
-    return { markActiveTabDirty };
+    return { markActiveTabDirty, switchedTabs };
 }
