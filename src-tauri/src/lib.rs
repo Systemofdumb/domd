@@ -537,7 +537,7 @@ impl WindowTabs {
 /// covers every document in the window rather than just the one on screen.
 /// The per-window snapshot remains the fallback for anything that has not
 /// reported tabs (a window still starting up).
-fn unsaved_untitled_content(app: &AppHandle, label: &str) -> Option<String> {
+pub(crate) fn unsaved_untitled_content(app: &AppHandle, label: &str) -> Option<String> {
     let tabs = app.state::<WindowTabs>();
     if tabs.knows(label) {
         return tabs.first_unsaved_content(label);
