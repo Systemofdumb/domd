@@ -1,56 +1,48 @@
 "use client";
 import { useEffect } from "react";
+import { useApplePlatform } from "@/common/hooks/use-apple-platform";
 import { useTabStoreApi } from "../stores/tab-store";
 
 /**
- * Tab navigation shortcuts.
+ * Tab navigation: ⌘⇧[ / ⌘⇧] (Ctrl+Shift on other platforms).
  *
- * Cmd+N and Cmd+W are deliberately absent: both are native menu accelerators
- * (File ▸ New Window / Close Window, repointed at tabs), so Rust already
- * emits `menu-new-tab` / `menu-close-tab` for them. Handling them here too
- * would open or close two tabs per keypress wherever the key event also
- * reaches the webview. Only shortcuts with no menu counterpart live here.
+ * Deliberately nothing else. ⌘N and ⌘W are native menu accelerators, so Rust
+ * already emits `menu-new-tab` / `menu-close-tab` and handling them here too
+ * would fire twice wherever the key also reaches the webview. ⌘1–⌘9 and ⌘T
+ * belong to the heading and table commands in `@do-md/commands`; both keymaps
+ * listen on window during bubble, so a second claimant would be resolved by
+ * mount order rather than by any rule.
+ *
+ * Matches on `event.code`, not `event.key`: with Shift held, the bracket keys
+ * report "{" and "}", so keying off `event.key === "["` never fires.
  */
-export function useTabShortcuts() {
+export function useTabShortcuts({ enabled }: { enabled: boolean }) {
     const store = useTabStoreApi();
+    const isApple = useApplePlatform();
 
     useEffect(() => {
+        if (!enabled) return;
         const handler = (e: KeyboardEvent) => {
-            if (!e.metaKey) return;
+            const modifier = isApple ? e.metaKey : e.ctrlKey;
+            if (!modifier || !e.shiftKey) return;
+
+            const forward = e.code === "BracketRight";
+            const back = e.code === "BracketLeft";
+            if (!forward && !back) return;
 
             const { tabs, activeTabId } = store.state;
-            const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
+            if (tabs.length < 2) return;
+            const index = tabs.findIndex((tab) => tab.id === activeTabId);
+            if (index === -1) return;
 
-            // Cmd+Shift+] — next tab
-            if (e.key === "]" && e.shiftKey) {
-                e.preventDefault();
-                const nextIndex = (activeIndex + 1) % tabs.length;
-                store.activateTab(tabs[nextIndex].id);
-                return;
-            }
-
-            // Cmd+Shift+[ — previous tab
-            if (e.key === "[" && e.shiftKey) {
-                e.preventDefault();
-                const prevIndex =
-                    (activeIndex - 1 + tabs.length) % tabs.length;
-                store.activateTab(tabs[prevIndex].id);
-                return;
-            }
-
-            // Cmd+1 through Cmd+9 — jump to tab by position
-            const num = parseInt(e.key);
-            if (num >= 1 && num <= 9) {
-                e.preventDefault();
-                const targetIndex = num === 9 ? tabs.length - 1 : num - 1;
-                if (targetIndex < tabs.length) {
-                    store.activateTab(tabs[targetIndex].id);
-                }
-                return;
-            }
+            e.preventDefault();
+            const next = forward
+                ? (index + 1) % tabs.length
+                : (index - 1 + tabs.length) % tabs.length;
+            store.activateTab(tabs[next].id);
         };
 
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
-    }, [store]);
+    }, [store, enabled, isApple]);
 }

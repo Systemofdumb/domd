@@ -61,6 +61,11 @@ export function TabBar() {
         window.dispatchEvent(new CustomEvent("domd-new-tab"));
     };
 
+    // A window showing one document looks exactly as it did before tabs
+    // existed: no strip, no border, no reserved height. Rendering nothing
+    // rather than hiding it means the flex column never allots the row.
+    if (tabs.length <= 1) return null;
+
     return (
         <div
             ref={barRef}

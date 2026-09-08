@@ -11,6 +11,7 @@
     "menu": {
         "about": "About DOMD",
         "checkUpdates": "Check for Updates...",
+        "newTab": "New Tab",
         "newWindow": "New Window",
         "openUrl": "Open URL...",
         "closeWindow": "Close Window",

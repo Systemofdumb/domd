@@ -130,12 +130,22 @@ fn build_app_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
         ],
     )?;
 
+    // Cmd+N opens a TAB in the current window and Shift+Cmd+N a new window —
+    // the shape every tabbed macOS app uses. Both are menu entries so the
+    // binding is discoverable and so the accelerators are owned in one place.
+    let new_tab_item = MenuItem::with_id(
+        manager,
+        "new-tab",
+        menu_i18n::t(locale, "menu.newTab"),
+        true,
+        Some("Cmd+N"),
+    )?;
     let new_window_item = MenuItem::with_id(
         manager,
         "new-window",
         menu_i18n::t(locale, "menu.newWindow"),
         true,
-        Some("Cmd+N"),
+        Some("Shift+Cmd+N"),
     )?;
     let open_url_item = MenuItem::with_id(
         manager,
@@ -170,6 +180,7 @@ fn build_app_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
         &menu_i18n::t(locale, "menu.file"),
         true,
         &[
+            &new_tab_item,
             &new_window_item,
             &open_url_item,
             &close_window_item,
@@ -449,11 +460,24 @@ pub struct WindowFiles(pub Mutex<HashMap<String, String>>);
 ///    duplicate;
 ///  * the file watcher, so background tabs are watched too and not just the
 ///    window's last-assigned document.
-pub struct WindowTabs(pub Mutex<HashMap<String, Vec<String>>>);
+/// One open tab, as the frontend sees it.
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabInfo {
+    /// None for a document that has never been saved.
+    pub path: Option<String>,
+    pub is_dirty: bool,
+    /// Sent ONLY for tabs that are dirty AND never saved — the only ones the
+    /// native save sheet can be asked to review, and the only ones whose
+    /// content the Rust side has any reason to hold.
+    pub content: Option<String>,
+}
+
+pub struct WindowTabs(pub Mutex<HashMap<String, Vec<TabInfo>>>);
 
 impl WindowTabs {
-    pub fn set(&self, label: &str, paths: Vec<String>) {
-        self.0.lock().unwrap().insert(label.to_string(), paths);
+    pub fn set(&self, label: &str, tabs: Vec<TabInfo>) {
+        self.0.lock().unwrap().insert(label.to_string(), tabs);
     }
 
     pub fn remove(&self, label: &str) {
@@ -466,7 +490,9 @@ impl WindowTabs {
             .lock()
             .unwrap()
             .iter()
-            .find(|(_, paths)| paths.iter().any(|p| p == path))
+            .find(|(_, tabs)| {
+                tabs.iter().any(|t| t.path.as_deref() == Some(path))
+            })
             .map(|(label, _)| label.clone())
     }
 
@@ -476,11 +502,60 @@ impl WindowTabs {
             .lock()
             .unwrap()
             .iter()
-            .flat_map(|(label, paths)| {
-                paths.iter().map(move |p| (label.clone(), p.clone()))
+            .flat_map(|(label, tabs)| {
+                tabs.iter().filter_map(move |t| {
+                    t.path.as_ref().map(|p| (label.clone(), p.clone()))
+                })
             })
             .collect()
     }
+
+    /// Has the frontend reported tab state for this window yet?
+    pub fn knows(&self, label: &str) -> bool {
+        self.0.lock().unwrap().contains_key(label)
+    }
+
+    /// Content of the first tab holding work no autosave will ever write:
+    /// dirty AND never saved. This is what the close/quit gates ask about,
+    /// and the point of reporting per-tab state at all — a window must not be
+    /// able to close over unsaved work sitting in a tab you cannot see.
+    pub fn first_unsaved_content(&self, label: &str) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap()
+            .get(label)?
+            .iter()
+            .find(|t| t.is_dirty && t.path.is_none())
+            .map(|t| t.content.clone().unwrap_or_default())
+    }
+}
+
+/// Does this window hold unsaved, never-saved work — and if so, what should
+/// the save sheet show?
+///
+/// Tab state is authoritative once the frontend has reported it, because it
+/// covers every document in the window rather than just the one on screen.
+/// The per-window snapshot remains the fallback for anything that has not
+/// reported tabs (a window still starting up).
+fn unsaved_untitled_content(app: &AppHandle, label: &str) -> Option<String> {
+    let tabs = app.state::<WindowTabs>();
+    if tabs.knows(label) {
+        return tabs.first_unsaved_content(label);
+    }
+    let has_path = app
+        .state::<WindowFiles>()
+        .0
+        .lock()
+        .unwrap()
+        .contains_key(label);
+    if has_path {
+        return None;
+    }
+    let content_state = app.state::<WindowContents>().get(label);
+    if content_state.as_ref().map_or(false, |c| c.is_dirty) {
+        return Some(content_state.map(|c| c.content).unwrap_or_default());
+    }
+    None
 }
 
 /// Per-window `UntitledDoc` (NSDocument subclass) used to drive the native
@@ -839,10 +914,12 @@ fn update_content(
     state.set(window.label(), content, is_dirty);
 }
 
-/// FE pushes the paths of all open tabs whenever the tab set changes.
+/// FE pushes the state of all open tabs whenever the tab set changes — paths
+/// for `open_or_reuse` and the file watcher, dirty/untitled for the close and
+/// quit gates.
 #[tauri::command]
-fn update_tabs(window: Window, state: State<WindowTabs>, paths: Vec<String>) {
-    state.set(window.label(), paths);
+fn update_tabs(window: Window, state: State<WindowTabs>, tabs: Vec<TabInfo>) {
+    state.set(window.label(), tabs);
 }
 
 /// Drop this window's assigned path — the counterpart to `set_window_path`.
@@ -1252,15 +1329,9 @@ fn terminate_now(app: &AppHandle) {
 /// These mirror the per-window CloseRequested gate exactly.
 #[cfg(target_os = "macos")]
 fn dirty_untitled_labels(app: &AppHandle) -> Vec<String> {
-    let files = app.state::<WindowFiles>();
-    let files = files.0.lock().unwrap();
-    let contents = app.state::<WindowContents>();
     app.webview_windows()
         .into_keys()
-        .filter(|label| {
-            !files.contains_key(label)
-                && contents.get(label).map_or(false, |c| c.is_dirty)
-        })
+        .filter(|label| unsaved_untitled_content(app, label).is_some())
         .collect()
 }
 
@@ -1277,23 +1348,14 @@ fn review_queue_then_quit(app: AppHandle, mut queue: Vec<String>) {
             return;
         };
         // Skip windows that vanished or were saved/cleaned since the snapshot.
-        let still_pending = {
-            let files = app.state::<WindowFiles>();
-            let untitled = !files.0.lock().unwrap().contains_key(&label);
-            let dirty = app
-                .state::<WindowContents>()
-                .get(&label)
-                .map_or(false, |c| c.is_dirty);
-            untitled && dirty && app.get_webview_window(&label).is_some()
-        };
-        if !still_pending {
+        // Same gate as CloseRequested, so a window that holds unsaved work in
+        // a BACKGROUND tab is reviewed here too rather than quietly quitting.
+        if app.get_webview_window(&label).is_none() {
             continue;
         }
-        let content = app
-            .state::<WindowContents>()
-            .get(&label)
-            .map(|c| c.content)
-            .unwrap_or_default();
+        let Some(content) = unsaved_untitled_content(&app, &label) else {
+            continue;
+        };
         let _ = app.get_webview_window(&label).map(|w| w.set_focus());
         let app_for_then = app.clone();
         start_native_close_flow_with(
@@ -1388,25 +1450,16 @@ pub fn run() {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let label = window.label().to_string();
                     let app = window.app_handle();
-                    let has_path =
-                        app.state::<WindowFiles>().0.lock().unwrap().contains_key(&label);
-                    if has_path {
-                        // Saved file — let it close.
+                    // Asks about EVERY document in the window, not just the
+                    // one on screen: with tabs, the unsaved work that must
+                    // not be discarded is often in a tab you cannot see.
+                    let Some(content) = unsaved_untitled_content(app, &label)
+                    else {
+                        // Saved, blank or untouched — let it close.
                         return;
-                    }
-                    // Pathless. Check dirty + content from the FE-pushed
-                    // snapshot.
-                    let content_state = app.state::<WindowContents>().get(&label);
-                    let is_dirty = content_state.as_ref().map_or(false, |c| c.is_dirty);
-                    if !is_dirty {
-                        // Blank or untouched — let it close.
-                        return;
-                    }
+                    };
                     #[cfg(target_os = "macos")]
                     {
-                        let content = content_state
-                            .map(|c| c.content)
-                            .unwrap_or_default();
                         api.prevent_close();
                         // Trigger the native NSDocument flow on the main
                         // thread. Errors are silent — worst case the window
@@ -1472,7 +1525,8 @@ pub fn run() {
                 // back to window granularity when none is (e.g. the app is
                 // active with every window closed). The frontend decides what
                 // closing the last tab means — see the domd-close-tab handler.
-                if event.id() == "new-window" {
+                if event.id() == "new-tab" {
+                    // No focused window means no tab strip to add to.
                     if let Some(win) = app.webview_windows().values().find(|w| {
                         w.is_focused().unwrap_or(false)
                     }) {
@@ -1480,6 +1534,8 @@ pub fn run() {
                     } else {
                         new_empty_window(app);
                     }
+                } else if event.id() == "new-window" {
+                    new_empty_window(app);
                 } else if event.id() == "close-window" {
                     if let Some(win) = app.webview_windows().values().find(|w| {
                         w.is_focused().unwrap_or(false)

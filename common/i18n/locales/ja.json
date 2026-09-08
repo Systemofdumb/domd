@@ -11,6 +11,7 @@
     "menu": {
         "about": "DOMD について",
         "checkUpdates": "アップデートを確認...",
+        "newTab": "新しいタブ",
         "newWindow": "新規ウインドウ",
         "openUrl": "URL を開く...",
         "closeWindow": "ウインドウを閉じる",

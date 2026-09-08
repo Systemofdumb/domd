@@ -12,7 +12,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isTauri } from "@/common/lib/platform";
-import { tauriCore, tauriDialog } from "@/common/lib/tauri";
+import {
+    tauriCore,
+    tauriDialog,
+    tauriWebviewWindow,
+} from "@/common/lib/tauri";
 import { useLatest } from "@/common/lib/use-latest";
 import {
     blankTauriDoc,
@@ -44,7 +48,7 @@ export function useTabs({
     const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
     const onDocumentSwitchRef = useLatest(onDocumentSwitch);
 
-    useTabShortcuts();
+    useTabShortcuts({ enabled });
 
     /** Mirror the editor's unsaved-changes state onto the active tab so the
      *  tab bar can badge it. Stable identity — Editor stores it in a ref. */
@@ -147,12 +151,20 @@ export function useTabs({
             const { tabId } = (e as CustomEvent).detail;
             if (!store.state.tabs.some((tb) => tb.id === tabId)) return;
             void (async () => {
+                // Closing the LAST tab closes the window, and that goes
+                // through the ordinary close so the native save sheet stays
+                // the single authority on unsaved work — it now sees every
+                // tab, not just the visible one (see update_tabs).
+                if (store.state.tabs.length <= 1) {
+                    const { getCurrentWebviewWindow } =
+                        await tauriWebviewWindow();
+                    await getCurrentWebviewWindow().close();
+                    return;
+                }
+                // Closing one tab among several has no native counterpart:
+                // the sheet speaks for a window, so ask here instead.
                 if (!(await resolveUnsaved(tabId))) return;
-                if (store.closeTab(tabId) !== "last-tab") return;
-                // Closing the only tab closes the window. Everything unsaved
-                // has just been resolved, so skip the native sheet.
-                const { invoke } = await tauriCore();
-                await invoke("force_close_window").catch(() => {});
+                store.closeTab(tabId);
             })();
         };
 
@@ -235,13 +247,23 @@ export function useTabs({
     // the window's last-assigned document).
     useEffect(() => {
         if (!enabled) return;
-        const paths = tabs
-            .map((tab) => (tab.meta.kind === "tauri" ? tab.meta.path : null))
-            .filter((path): path is string => path !== null);
-        tauriCore().then(({ invoke }) => {
-            invoke("update_tabs", { paths }).catch(() => {});
+        const payload = tabs.map((tab) => {
+            const path = tab.meta.kind === "tauri" ? tab.meta.path : null;
+            const unsaveable = tab.isDirty && !path;
+            return {
+                path,
+                isDirty: tab.isDirty,
+                // Only for tabs the save sheet could be asked to review.
+                // Everything else is either on disk already or has nothing to
+                // lose, and shipping every document's text to Rust on every
+                // keystroke would be pointless traffic.
+                content: unsaveable ? store.contentOf(tab.id) : null,
+            };
         });
-    }, [tabs, enabled]);
+        tauriCore().then(({ invoke }) => {
+            invoke("update_tabs", { tabs: payload }).catch(() => {});
+        });
+    }, [tabs, enabled, store]);
 
     // ── The window's assigned document follows the active tab ────────────
     // Drives the window title, and the close flow: Rust lets a window close

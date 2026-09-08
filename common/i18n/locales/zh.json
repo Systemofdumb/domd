@@ -11,6 +11,7 @@
     "menu": {
         "about": "关于 DOMD",
         "checkUpdates": "检查更新...",
+        "newTab": "新建标签页",
         "newWindow": "新建窗口",
         "openUrl": "打开 URL...",
         "closeWindow": "关闭窗口",
