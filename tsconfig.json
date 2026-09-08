@@ -1,75 +1,76 @@
 {
-    "compilerOptions": {
-        "target": "ES2017",
-        "lib": [
-            "dom",
-            "dom.iterable",
-            "esnext"
-        ],
-        "allowJs": true,
-        "skipLibCheck": true,
-        "strict": true,
-        "noEmit": true,
-        "esModuleInterop": true,
-        "module": "esnext",
-        "moduleResolution": "bundler",
-        "resolveJsonModule": true,
-        "isolatedModules": true,
-        "jsx": "react-jsx",
-        "incremental": true,
-        "plugins": [
-            {
-                "name": "next"
-            }
-        ],
-        "paths": {
-            "@/*": [
-                "./*"
-            ],
-            "@do-md/commands": [
-                "./.packages/@do-md/plugins/commands/src"
-            ],
-            "@do-md/core-react": [
-                "./.packages/@do-md/core/src"
-            ],
-            "@do-md/core-react/style.css": [
-                "./.packages/@do-md/core/src/style.css"
-            ],
-            "@do-md/search": [
-                "./.packages/@do-md/plugins/search/src"
-            ],
-            "@do-md/toc": [
-                "./.packages/@do-md/plugins/toc/src"
-            ],
-            "@do-md/utils": [
-                "./.packages/@do-md/utils"
-            ],
-            "@do-md/zenith": [
-                "./.packages/@do-md/zenith"
-            ],
-            "@do-md/zenith/middleware": [
-                "./.packages/@do-md/zenith/middleware"
-            ]
-        }
-    },
-    "include": [
-        "next-env.d.ts",
-        "**/*.ts",
-        "**/*.tsx",
-        ".next/types/**/*.ts",
-        ".next/dev/types/**/*.ts",
-        "**/*.mts",
-        ".packages/**/*.ts",
-        ".packages/**/*.tsx"
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
     ],
-    "exclude": [
-        "node_modules",
-        "plugins/**/verify/**",
-        "services/**",
-        "scripts/**",
-        ".packages/**/node_modules/**",
-        ".packages/**/scripts/**",
-        ".packages/**/*.config.ts",
-        ".packages/**/dist/**"
-    ]
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@do-md/commands": [
+        "./.packages/@do-md/plugins/commands/src"
+      ],
+      "@do-md/core-react": [
+        "./.packages/@do-md/core/src"
+      ],
+      "@do-md/core-react/style.css": [
+        "./.packages/@do-md/core/src/style.css"
+      ],
+      "@do-md/search": [
+        "./.packages/@do-md/plugins/search/src"
+      ],
+      "@do-md/toc": [
+        "./.packages/@do-md/plugins/toc/src"
+      ],
+      "@do-md/utils": [
+        "./.packages/@do-md/utils"
+      ],
+      "@do-md/zenith": [
+        "./.packages/@do-md/zenith"
+      ],
+      "@do-md/zenith/middleware": [
+        "./.packages/@do-md/zenith/middleware"
+      ]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts",
+    ".packages/**/*.ts",
+    ".packages/**/*.tsx",
+    ".next/dev/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "plugins/**/verify/**",
+    "services/**",
+    "scripts/**",
+    ".packages/**/node_modules/**",
+    ".packages/**/scripts/**",
+    ".packages/**/*.config.ts",
+    ".packages/**/dist/**"
+  ]
 }

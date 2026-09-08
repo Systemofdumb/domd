@@ -13,6 +13,7 @@ import {
     PendingFormatMarks,
     PendingInput,
     RenderData,
+    ScrollAnchor,
     SelectionState,
     StoreConstructorProps,
     StoreState,
@@ -116,6 +117,7 @@ export class EditorStore extends ZenithStore<StoreState> {
     private _undo_;
     private _redo_;
     private _chunkGeneration_: number;
+    private _scrollAnchor_: ScrollAnchor | null = null;
 
     constructor({
         editable: editable,
@@ -529,6 +531,29 @@ export class EditorStore extends ZenithStore<StoreState> {
      *  blur() instead of reading this. */
     public get blurRequest_() {
         return this.state.editorState_.blurRequest_;
+    }
+
+    /** Record the scroll position as an identity anchor (see ScrollAnchor).
+     *
+     *  Deliberately an instance field, NOT reactive state: scroll reporting is
+     *  high-frequency, has no UI consumer, and must never touch the undo stack
+     *  or wake store subscribers. Nothing reacts to it by design — the one
+     *  reader is `useScroll`, which consumes it exactly once when a view
+     *  attaches (restore is a mount-time act, never a sync). The anchor lives
+     *  and dies with the store, so a long-lived headless store (an editor tab
+     *  in the background) carries its reading position across view remounts
+     *  for free; hosts may also persist it and re-inject before mounting.
+     *
+     *  Written by the `useScroll` reporting loop; `null` clears (empty
+     *  document). Store-layer discipline: this records where the viewport is,
+     *  it never moves it. */
+    public setScrollAnchor(anchor: ScrollAnchor | null) {
+        this._scrollAnchor_ = anchor;
+    }
+
+    /** Last recorded scroll anchor, or null when nothing was captured. */
+    public get scrollAnchor(): ScrollAnchor | null {
+        return this._scrollAnchor_;
     }
 
     public setEditable(editable: boolean) {

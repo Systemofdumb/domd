@@ -115,6 +115,37 @@ export interface CursorInfo {
     spanOffset?: number;
 }
 
+/**
+ * Scroll position anchor: the identity-addressed record of "what the reader
+ * was looking at", captured by `useScroll` and kept on the store (an instance
+ * field, NOT reactive state — see `EditorStore.setScrollAnchor`).
+ *
+ * Same philosophy as CursorInfo's span anchor: positions are anchored to node
+ * identity, never to pixel offsets of the whole document. A pixel scrollTop
+ * dies on any reflow (side panel opening, mode switch, images loading, window
+ * resize); a block/span uuid survives all of them.
+ *
+ * - `blockUuid`/`blockDelta` — the first visible top-level block at the
+ *   viewport top (`data-render-id`), and its top offset relative to the
+ *   viewport top at capture time (px, negative while scrolled into a block).
+ * - `spanUuid`/`spanDelta` — the first visible text leaf inside that block
+ *   (`data-span-render-id`). This is the PRIMARY anchor on restore: a span is
+ *   an immutable atom that keeps its uuid across block split/merge/retype,
+ *   so it stays resolvable when the block identity is gone. The block is the
+ *   fallback. When neither resolves the restore is skipped entirely.
+ *
+ * Field names carry no `_` suffix: the type crosses the public surface (hosts
+ * may persist it and re-inject via `setScrollAnchor`), so mangling must leave
+ * it alone.
+ */
+export interface ScrollAnchor {
+    blockUuid: string;
+    blockDelta: number;
+    spanUuid?: string;
+    /** Always paired with spanUuid. */
+    spanDelta?: number;
+}
+
 /** Toggleable inline marks driven by the format toolbar / shortcuts. */
 export type InlineFormatMark =
     | "bold"

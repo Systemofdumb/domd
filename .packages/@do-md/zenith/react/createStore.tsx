@@ -18,13 +18,26 @@ export function createReactStore<
 
   const StoreContext = createContext<TStore | null>(null);
 
-  type StoreProviderProps = TProps extends undefined
+  type StoreProviderProps = (TProps extends undefined
     ? { children: React.ReactNode; initialProps?: undefined }
-    : { children: React.ReactNode; initialProps: TProps };
+    : { children: React.ReactNode; initialProps: TProps }) & {
+    /** Bring your own store: mount the provider onto an EXISTING store
+     *  instance the host owns, instead of constructing one internally. When
+     *  given, `initialProps` is ignored — the store was already built. The
+     *  host owns the lifecycle (the provider never destroys it), which is
+     *  what lets a document runtime outlive its view: keep the store, remount
+     *  the tree. Captured once on mount — to switch stores, remount with a
+     *  new `key`. */
+    store?: TStore;
+  };
 
-  const StoreProvider = ({ children, initialProps }: StoreProviderProps) => {
+  const StoreProvider = ({
+    children,
+    initialProps,
+    store: externalStore,
+  }: StoreProviderProps) => {
     const [store] = useState<TStore>(
-      () => new StoreClass(initialProps as TProps) as TStore,
+      () => externalStore ?? (new StoreClass(initialProps as TProps) as TStore),
     );
     return createElement(StoreContext.Provider, { value: store }, children);
   };

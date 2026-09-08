@@ -6,6 +6,7 @@ import {
 } from "../context";
 import Renderer from "./Renderer";
 import { UseCursor } from "../hooks/UseCursor";
+import { useScrollMemory } from "../hooks/useScrollMemory";
 import { EditorController } from "../../../controller/EditorController";
 import { MarkdownType } from "../../../type/enum";
 import {
@@ -76,6 +77,7 @@ const EditorProvider = ({ children }: { children: React.ReactNode }) => {
 
 export const DOMDProvider = ({
     children,
+    store,
     editable = true,
     initMd,
     placeholder = "",
@@ -91,6 +93,18 @@ export const DOMDProvider = ({
     onEnter,
 }: {
     children: React.ReactNode;
+    /** Bring your own store: mount the editor onto an EXISTING EditorStore
+     *  the host owns, instead of constructing one from the props below. When
+     *  given, every construction-time prop (initMd, placeholder, mode,
+     *  tokenizers, inlineRules, …) is ignored — the store already carries
+     *  them. The host owns the lifecycle: the provider never destroys the
+     *  store, so it survives view unmounts — the seam that turns a store
+     *  into a document runtime (editor tabs: one long-lived store per tab,
+     *  views attach and detach). Detach/re-attach is safe by design:
+     *  EditorController.destroy_() removes listeners only and never touches
+     *  store data. Captured once on mount — to switch documents, remount
+     *  with a new `key` and pass the next store. */
+    store?: EditorStore;
     editable?: boolean;
     initMd?: string;
     placeholder?: string;
@@ -130,6 +144,7 @@ export const DOMDProvider = ({
 }) => {
     return (
         <EditorStoreProvider
+            store={store}
             initialProps={{
                 editable: editable,
                 initMd,
@@ -155,6 +170,11 @@ export const DOMDProvider = ({
 export const DOMD = () => {
     const renderData = useEditorStore((store) => store.renderData_);
     const isEditable = useEditorStore((store) => store.isEditable);
+    // Always-on scroll memory: reports an identity anchor (block + span uuid)
+    // to the store while scrolling, and restores it once when this view
+    // mounts over a store that already carries one (editor tabs, persisted
+    // sessions). Lives on the view — headless stores never pay for it.
+    useScrollMemory();
     return (
         <div>
             {isEditable && <UseCursor />}

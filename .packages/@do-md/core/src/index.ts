@@ -28,6 +28,11 @@ export { useEditorDom } from "./editor/render/react/hooks/useEditorDom";
 // State-first toolbar surface: reactive isActive/can per inline mark
 // (bold/italic/strike/highlight/underline) — bind UI, no command queries.
 export { useFormatState } from "./editor/render/react/hooks/useFormatState";
+// Scroll memory is kernel-internal and always on (mounted by <DOMD/>, scroll
+// container auto-detected): the store carries a ScrollAnchor snapshot at all
+// times, and a view mounting over a store that already has one restores it
+// once. Hosts interact through store.scrollAnchor / setScrollAnchor only —
+// e.g. persist it and re-inject before mounting to resume a session.
 
 // Type exports
 export type {
@@ -50,6 +55,7 @@ export type {
     SelectionState,
     StoreConstructorProps,
     CursorInfo,
+    ScrollAnchor,
     EditorDomContextValue,
 } from "./editor/type";
 
