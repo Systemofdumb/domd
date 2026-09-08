@@ -80,15 +80,28 @@ const EditorProvider = ({ children }: { children: React.ReactNode }) => {
         [attachTextAreaDom_],
     );
 
-    // The initial value 0 means nobody has requested focus yet, so skip it; every
-    // later focus() bump lands here.
+    // focusRequest_/blurRequest_ are EDGE-triggered intent counters: one bump
+    // is one gesture, and each must be consumed exactly once. These effects
+    // also depend on `editor` — the controller is rebuilt per attached view —
+    // so without explicit dedup, every re-attach would replay the LAST
+    // gesture the store ever saw (a single store.blur() would blur every
+    // future attach forever, undoing the attach protocol's focus
+    // restoration). The consumed-counter refs are initialized from the
+    // store's CURRENT values, not 0: a store handed in with history
+    // (bring-your-own-store, provider rebuilt over a live store) has all its
+    // past intents already consumed by previous views — restoration is the
+    // attach protocol's job (restoreViewState_), never a replayed gesture.
+    const consumedFocusRef = useRef(editorStore.focusRequest_);
+    const consumedBlurRef = useRef(editorStore.blurRequest_);
     useEffect(() => {
-        if (!focusRequest || !editor) return;
+        if (!editor || focusRequest === consumedFocusRef.current) return;
+        consumedFocusRef.current = focusRequest;
         editor.focus();
     }, [focusRequest, editor]);
 
     useEffect(() => {
-        if (!blurRequest || !editor) return;
+        if (!editor || blurRequest === consumedBlurRef.current) return;
+        consumedBlurRef.current = blurRequest;
         editor.blur();
     }, [blurRequest, editor]);
 

@@ -1220,14 +1220,64 @@ export class EditorController {
     // stable, so add/removeEventListener pair up correctly.
     // ======================================================================
 
+    // ======================================================================
+    // View attachment protocol.
+    //
+    // The store is the document runtime; a controller binds one render
+    // surface (the contenteditable root) to it for the duration of a view's
+    // life. The store carries persistent view-state — cursorInfo_ (the
+    // selection), focused_ (input focus) and scrollAnchor (the viewport) —
+    // which a detach never clears and an attach re-materializes into the DOM:
+    //
+    //   - scroll is restored by the render layer's scroll-memory hook in its
+    //     layout effect (before paint, so there is no flash at the top);
+    //   - focus and the selection are restored here, right after listener
+    //     binding, in restoreViewState_().
+    //
+    // init_/destroy_ are the two halves of that protocol: attach = bind +
+    // restore, detach = unbind and NOTHING else. A host that keeps a store
+    // alive across view unmounts (editor tabs, split view) gets its full
+    // editing context back on every re-attach without managing any of it.
+    // ======================================================================
+
     public init_() {
-        this._textAreaDom_.scrollTo(0, 0);
         this.enableListener_();
+        this.restoreViewState_();
     }
 
     public destroy_() {
         this.disableListener_();
         this._parentMapEffectCleanup_();
+    }
+
+    /**
+     * Re-materialize the store's persistent view-state into a freshly attached
+     * DOM. Restoration mirrors the state the document was DETACHED in — it
+     * never invents state:
+     *
+     * - A fresh store (no cursor yet) restores nothing; first mount is
+     *   byte-for-byte the old behavior.
+     * - A store that was blurred when its view went away stays blurred: no
+     *   focus steal, no selection write (a blurred editor holds no visible
+     *   selection, and the user's focus is elsewhere by definition).
+     * - A store that was focused gets DOM focus back (preventScroll — the
+     *   viewport belongs to the scroll anchor) and its full selection replayed
+     *   exactly as recorded, range selections included.
+     *
+     * Deliberately NOT the public focus() path: focus() is the semantic of the
+     * "click the blank area" gesture — it collapses a range to its start and
+     * invents a caret at the last block when none exists. Restoration must do
+     * neither.
+     *
+     * The selection replay carries no viewport command (scrollIntoView =
+     * false): "where the caret is" and "where the user was looking" are
+     * independent axes of view-state, each restored by its own mechanism.
+     */
+    private restoreViewState_() {
+        if (!this._editorStore_.focused_) return;
+        if (!this._editorStore_.startCursorInfo) return;
+        this._textAreaDom_.focus({ preventScroll: true });
+        this._replaySelection_(false);
     }
 
     public enableListener_() {
@@ -2262,6 +2312,31 @@ export class EditorController {
     // ======================================================================
 
     public replayCursor_() {
+        this._replaySelection_(true);
+    }
+
+    /**
+     * The selection-replay body shared by the render-layer contract
+     * (replayCursor_, scrollIntoView = true: after an edit/undo the caret must
+     * be visible) and view-state restoration (restoreViewState_, scrollIntoView
+     * = false: re-attaching a view restores the selection as a fact, while the
+     * viewport is restored independently by the scroll anchor — a caret that
+     * was off-screen at detach time stays off-screen).
+     */
+    private _replaySelection_(scrollIntoView: boolean) {
+        // —— Focus guard (first rule of the replay matrix) ——
+        // While the editor is blurred, cursorInfo_ is a RECORD, not something
+        // the DOM should express: writing the native selection into an
+        // unfocused contenteditable paints a gray inactive highlight out of
+        // nowhere and steals whatever selection the user holds elsewhere on
+        // the page. This mirrors the store's own blur semantics (awareness
+        // reports null while cursorInfo_ is kept) — the DOM expression obeys
+        // the same gate. Covers every blurred-state cursorInfo_ change:
+        // collaborative re-anchoring, AI edits, undo through native menus,
+        // and the view-attach replay of a store that was blurred at detach.
+        // When focus returns, the focus gesture (controller.focus()) or the
+        // attach protocol re-materializes the selection from the store.
+        if (!this._editorStore_.focused_) return;
         // The replay criterion moved from a blanket "never replay when
         // source_ === Dom" to "do not replay if the DOM is already in place"
         // (idempotent): the former meant a Dom-sourced cursor restored by undo would
@@ -2361,7 +2436,9 @@ export class EditorController {
                     range.setEnd(endNode as Node, endOffset);
                     selection.removeAllRanges();
                     selection.addRange(range);
-                    this.scrollToCursor_(endNode as HTMLElement);
+                    if (scrollIntoView) {
+                        this.scrollToCursor_(endNode as HTMLElement);
+                    }
                 }
             }
             return;
@@ -2379,7 +2456,9 @@ export class EditorController {
             return;
         }
         selection?.collapse(startNode as Node, startOffset);
-        this.scrollToCursor_(startNode as HTMLElement);
+        if (scrollIntoView) {
+            this.scrollToCursor_(startNode as HTMLElement);
+        }
     }
 
     private scrollToCursor_(curNode: HTMLElement, PaddingBottom = 50) {

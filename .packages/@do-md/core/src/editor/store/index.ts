@@ -1035,6 +1035,19 @@ export class EditorStore extends ZenithStore<StoreState> {
     }
 
     /**
+     * Whether the editor holds input focus, as the MODEL sees it — one third
+     * of the persistent view-state (cursorInfo_, focused_, scrollAnchor) that
+     * survives a view detach and is re-materialized by the next attach.
+     * Detaching a view fires no DOM blur (removed elements never do), so this
+     * deliberately keeps its last value: it answers "was the editor focused
+     * when the view went away", which is exactly what view-state restoration
+     * needs.
+     */
+    public get focused_() {
+        return this._focused_;
+    }
+
+    /**
      * Subscribe to local cursor changes (addressed by uuid + block-relative
      * offset — the applying peer needs no position mapping, since a remote change
      * outside the cursor's block cannot affect the local cursor anyway).
