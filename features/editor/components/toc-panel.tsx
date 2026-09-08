@@ -27,7 +27,11 @@
  */
 import { useEffect, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import { useEditorDom, useEditorStoreApi } from "@do-md/core-react";
+import {
+    matchesLetterKey,
+    useEditorDom,
+    useEditorStoreApi,
+} from "@do-md/core-react";
 import {
     bindTocSpy,
     scrollToHeading,
@@ -52,14 +56,14 @@ export const TOC_TOGGLE_SHORTCUT = {
 function matchTocToggleShortcut(
     event: Pick<
         KeyboardEvent,
-        "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+        "code" | "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
     >,
     { mac }: { mac: boolean },
 ): boolean {
     const primary = mac ? event.metaKey : event.ctrlKey;
     const foreign = mac ? event.ctrlKey : event.metaKey;
     if (!primary || foreign) return false;
-    return event.code === "KeyO" && event.shiftKey && !event.altKey;
+    return matchesLetterKey(event, "o") && event.shiftKey && !event.altKey;
 }
 
 /** Engine + spy wiring and the toggle keystroke; renders nothing. Mount

@@ -3,9 +3,13 @@
  * beside a menu row and the key combination that fires it come from the same
  * entry, so the two can never drift apart.
  *
- * Matching is on `KeyboardEvent.code`, not `key` — with Shift held, `key` for
- * the 9 key is "(" on a US layout (and something else again elsewhere), while
- * `code` stays "Digit9" on every layout.
+ * Digits and punctuation match on `KeyboardEvent.code`, not `key` — with Shift
+ * held, `key` for the 9 key is "(" on a US layout (and something else again
+ * elsewhere), while `code` stays "Digit9" on every layout.
+ *
+ * Letters are the opposite, and `matchesShortcutKey` explains why: `code`
+ * names a position on a US QWERTY board, so binding a letter by `code` binds
+ * whatever letter that position carries on the user's actual layout.
  *
  * Ownership: the kernel binds only undo/redo, select-all, Enter/Tab and the
  * IME plumbing. Everything below is this layer's, including the ⌘0-⌘6 heading
@@ -13,7 +17,7 @@
  * one owner, and that owner calls the same function a button would.
  */
 
-import type { EditorStoreApi } from "@do-md/core-react";
+import { matchesLetterKey, type EditorStoreApi } from "@do-md/core-react";
 import {
     clearFormatting,
     insertLink,
@@ -45,7 +49,8 @@ export type EditorCommandId =
     | "insertTable";
 
 export interface CommandShortcut {
-    /** Physical key, matched against `KeyboardEvent.code`. */
+    /** The key, written as a `KeyboardEvent.code`. Letter codes name the
+     *  LETTER, not the position — see `matchesShortcutKey`. */
     code: string;
     shift?: boolean;
     alt?: boolean;
@@ -176,10 +181,33 @@ function asSet(
     return ids instanceof Set ? ids : new Set(ids);
 }
 
+const LETTER_CODE = /^Key([A-Z])$/;
+
+/** Does `event` press the key a shortcut's `code` names?
+ *
+ *  Non-letters match on `event.code`, which is the whole reason the registry
+ *  is written in code spelling: Shift rewrites `key` ("9" → "(") while the
+ *  physical position holds still.
+ *
+ *  Letters must not — `code` names a US QWERTY position, so `KeyZ` is the key
+ *  labelled W on AZERTY. `matchesLetterKey` is the kernel's test for that, and
+ *  it carries the reasoning. */
+function matchesShortcutKey(
+    event: Pick<KeyboardEvent, "code" | "key">,
+    code: string,
+): boolean {
+    const letter = LETTER_CODE.exec(code)?.[1];
+    if (!letter) return event.code === code;
+    return matchesLetterKey(event, letter.toLowerCase());
+}
+
 /** Which command a keystroke should run, or null for a keystroke this layer
  *  does not claim. */
 export function matchCommandShortcut(
-    event: Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
+    event: Pick<
+        KeyboardEvent,
+        "code" | "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+    >,
     options: ShortcutMatchOptions,
 ): EditorCommandId | null {
     const { mac } = options;
@@ -188,7 +216,7 @@ export function matchCommandShortcut(
     if (!primary || foreign) return null;
     const disabled = asSet(options.disabled);
     for (const [key, shortcut] of Object.entries(EDITOR_SHORTCUTS)) {
-        if (event.code !== shortcut.code) continue;
+        if (!matchesShortcutKey(event, shortcut.code)) continue;
         if (Boolean(shortcut.shift) !== event.shiftKey) continue;
         if (Boolean(shortcut.alt) !== event.altKey) continue;
         const id = key as EditorCommandId;
