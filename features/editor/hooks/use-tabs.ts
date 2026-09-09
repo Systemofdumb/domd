@@ -9,14 +9,10 @@
  *
  * Web never calls this — one page, one document, no tab bar.
  */
-import { useCallback, useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@/common/lib/platform";
-import {
-    tauriCore,
-    tauriDialog,
-    tauriWebviewWindow,
-} from "@/common/lib/tauri";
+import { tauriCore, tauriWebviewWindow } from "@/common/lib/tauri";
+import type { UnsavedChoice } from "../components/tab-close-modal";
 import { useLatest } from "@/common/lib/use-latest";
 import {
     blankTauriDoc,
@@ -27,6 +23,14 @@ import { saveDocument } from "../lib/save-document";
 import { useTabShortcuts } from "./use-tab-shortcuts";
 import { useTauriEvent } from "./use-tauri-event";
 import { useTabStore, useTabStoreApi } from "../stores/tab-store";
+
+/** A tab close waiting on the user's answer. The name is captured when the
+ *  prompt opens rather than read at render time, so a rename or a save landing
+ *  underneath cannot change the question already on screen. */
+export interface TabCloseRequest {
+    tabId: string;
+    name: string;
+}
 
 export function useTabs({
     enabled,
@@ -41,7 +45,6 @@ export function useTabs({
      *  and only the active tab has a mounted editor to attach one to. */
     onDocumentSwitch: () => void;
 }) {
-    const { t } = useTranslation();
     const store = useTabStoreApi();
     const tabs = useTabStore((s) => s.state.tabs);
     const activeTabId = useTabStore((s) => s.state.activeTabId);
@@ -109,6 +112,75 @@ export function useTabs({
         );
     });
 
+    // ── The per-tab unsaved prompt ───────────────────────────────────────
+    // Closing one tab among several has no native counterpart — the macOS
+    // sheet speaks for a window — so this asks in-app, with the sheet's three
+    // outcomes rather than the two the `ask` plugin dialog can offer.
+    //
+    // The close flow is async and the answer comes from a rendered component,
+    // so the promise is bridged through a ref: `askUnsaved` parks the resolver
+    // and shows the modal, `decideUnsaved` settles it. A ref rather than state
+    // because the event handlers below read it during an event, when a state
+    // value captured at render time would be stale.
+    const [closeRequest, setCloseRequest] = useState<TabCloseRequest | null>(
+        null,
+    );
+    const decideRef = useRef<((choice: UnsavedChoice) => void) | null>(null);
+    const refocusRef = useRef<HTMLElement | null>(null);
+
+    const askUnsaved = useCallback(
+        (request: TabCloseRequest) =>
+            new Promise<UnsavedChoice>((resolve) => {
+                // Captured before the modal takes focus, so it is whatever the
+                // user was actually in. Only ever given back on Cancel.
+                refocusRef.current = document.activeElement as HTMLElement | null;
+                decideRef.current = resolve;
+                setCloseRequest(request);
+            }),
+        [],
+    );
+
+    /** Put the caret back where it was before the prompt.
+     *
+     *  Cancel ONLY, and it is not optional there: the editor stays mounted and
+     *  focus is sitting on a button that is about to disappear, so the next
+     *  keystroke would go to <body>. The kernel binds its key handling to the
+     *  editable root, which means typing would silently do nothing until you
+     *  clicked back in.
+     *
+     *  Save and discard skip it because both close the tab, and focus for the
+     *  document that comes forward belongs to TabFocusOnSwitch, after the
+     *  switch. Restoring here too would aim at the outgoing editor and race
+     *  the component whose whole job this is. */
+    const refocusAfterCancel = useCallback(() => {
+        const previous = refocusRef.current;
+        refocusRef.current = null;
+        if (!previous) return;
+        // After the commit that unmounts the modal, or focus lands on an
+        // element that is on its way out.
+        requestAnimationFrame(() => {
+            if (previous.isConnected) previous.focus();
+        });
+    }, []);
+
+    const decideUnsaved = useCallback((choice: UnsavedChoice) => {
+        const decide = decideRef.current;
+        decideRef.current = null;
+        setCloseRequest(null);
+        decide?.(choice);
+    }, []);
+
+    // A prompt outliving its window would leave the close flow awaiting a
+    // promise nobody can settle. Cancelling is the safe resolution: it is the
+    // one outcome that touches neither the document nor the disk.
+    useEffect(
+        () => () => {
+            decideRef.current?.("cancel");
+            decideRef.current = null;
+        },
+        [],
+    );
+
     /** Ask about a tab whose work would otherwise be lost, and report whether
      *  the caller may proceed. False means the user cancelled.
      *
@@ -120,12 +192,13 @@ export function useTabs({
             if (!tab || !tab.isDirty) return true;
             if (tab.meta.kind !== "tauri" || tab.meta.path) return true;
 
-            const { ask } = await tauriDialog();
-            const shouldSave = await ask(
-                t("tabs.unsavedBody", { name: tab.meta.name }),
-                { title: t("tabs.unsavedTitle"), kind: "warning" },
-            );
-            if (!shouldSave) return true; // discard
+            const choice = await askUnsaved({ tabId, name: tab.meta.name });
+            if (choice === "cancel") {
+                refocusAfterCancel();
+                return false;
+            }
+            refocusRef.current = null;
+            if (choice === "discard") return true;
 
             // One path for every tab: the runtime holds the live document
             // whether or not a view is attached, so a background tab needs no
@@ -136,7 +209,7 @@ export function useTabs({
             if (result.ok) store.updateTabMeta(tabId, result.meta);
             return result.ok;
         },
-        [store, t],
+        [store, askUnsaved, refocusAfterCancel],
     );
 
     // ── New / close, driven by the tab bar, shortcuts and native menu ────
@@ -150,6 +223,10 @@ export function useTabs({
         const handleCloseTab = (e: Event) => {
             const { tabId } = (e as CustomEvent).detail;
             if (!store.state.tabs.some((tb) => tb.id === tabId)) return;
+            // One prompt at a time. ⌘W still reaches the menu while the modal
+            // is up, and a second close would strand the first request's
+            // resolver — the close it belongs to would then await forever.
+            if (decideRef.current) return;
             void (async () => {
                 // Closing the LAST tab closes the window, and that goes
                 // through the ordinary close so the native save sheet stays
@@ -307,5 +384,5 @@ export function useTabs({
     // people actually take, and saved documents are never at risk because
     // autosave and the switch-time flush have already written them.
 
-    return { markActiveTabDirty, switchedTabs };
+    return { markActiveTabDirty, switchedTabs, closeRequest, decideUnsaved };
 }

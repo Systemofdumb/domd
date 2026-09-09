@@ -413,6 +413,9 @@
         "scrollHorizontally": "Scroll horizontally",
         "untitled": "Untitled.md",
         "unsavedTitle": "Unsaved changes",
-        "unsavedBody": "Save changes to “{{name}}” before closing?"
+        "unsavedBody": "Save changes to “{{name}}” before closing?",
+        "unsavedSave": "Save",
+        "unsavedDontSave": "Don't Save",
+        "unsavedCancel": "Cancel"
     }
 }

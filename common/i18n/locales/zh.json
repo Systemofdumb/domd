@@ -413,6 +413,9 @@
         "scrollHorizontally": "横向滚动",
         "untitled": "Untitled.md",
         "unsavedTitle": "未保存的更改",
-        "unsavedBody": "关闭前保存对“{{name}}”的更改吗？"
+        "unsavedBody": "关闭前保存对“{{name}}”的更改吗？",
+        "unsavedSave": "保存",
+        "unsavedDontSave": "不保存",
+        "unsavedCancel": "取消"
     }
 }

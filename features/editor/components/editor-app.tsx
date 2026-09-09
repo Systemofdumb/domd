@@ -84,6 +84,7 @@ import { useDocumentLoaders } from "../hooks/use-document-loaders";
 import { useTabs } from "../hooks/use-tabs";
 import { TabStoreProvider } from "../stores/tab-store";
 import { TabBar } from "./tab-bar";
+import { TabCloseModal } from "./tab-close-modal";
 import { TabFocusOnSwitch } from "./tab-focus";
 import { useTauriDragDrop } from "../hooks/use-tauri-drag-drop";
 import { useTauriEvent } from "../hooks/use-tauri-event";
@@ -653,12 +654,13 @@ function EditorAppContent() {
     // holds one. Everything below the tab bar is the same editor either way —
     // useDocumentLoaders reads whichever tab is active, so a switch reaches
     // the kernel as an ordinary document swap (`key={version}`).
-    const { markActiveTabDirty, switchedTabs } = useTabs({
-        enabled: !isWeb,
-        // A tab switch retires the previous document exactly as loading a new
-        // file into the window does (see the open-file handler above).
-        onDocumentSwitch: detachSharing,
-    });
+    const { markActiveTabDirty, switchedTabs, closeRequest, decideUnsaved } =
+        useTabs({
+            enabled: !isWeb,
+            // A tab switch retires the previous document exactly as loading a
+            // new file into the window does (see the open-file handler above).
+            onDocumentSwitch: detachSharing,
+        });
 
     if (view === "loading" || meta === null || runtime === null) {
         // Loading covers ONLY the content area: the top bar (same classes as
@@ -872,6 +874,22 @@ function EditorAppContent() {
                     collabActive={collabRoom !== null}
                     onClose={() => setShowNewDocModal(false)}
                     onConfirm={() => void handleNewDoc()}
+                />
+            ) : null}
+
+            {/* Deliberately unkeyed, like the modals above: the conditional
+                already gives each prompt a fresh instance. A key here is not
+                merely redundant, it is a trap — the obvious one to reach for
+                is the tab id, which is exactly what keys the DOMDProvider
+                above (`version` IS the active tab id). Closing the active tab
+                then puts two siblings under one key, and React quietly mounts
+                a second editor shell without removing the first: two stacked
+                documents, no error, since the duplicate-key warning is
+                development-only. */}
+            {closeRequest ? (
+                <TabCloseModal
+                    name={closeRequest.name}
+                    onChoose={decideUnsaved}
                 />
             ) : null}
 

@@ -413,6 +413,9 @@
         "scrollHorizontally": "横スクロール",
         "untitled": "Untitled.md",
         "unsavedTitle": "未保存の変更",
-        "unsavedBody": "閉じる前に「{{name}}」の変更を保存しますか？"
+        "unsavedBody": "閉じる前に「{{name}}」の変更を保存しますか？",
+        "unsavedSave": "保存",
+        "unsavedDontSave": "保存しない",
+        "unsavedCancel": "キャンセル"
     }
 }
