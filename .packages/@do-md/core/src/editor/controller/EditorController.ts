@@ -48,8 +48,10 @@ const FORMAT_INPUT_TYPES: Record<string, InlineFormatMark> = {
  * Backward: Cmd+Delete → deleteSoftLineBackward / deleteHardLineBackward,
  * Option+Delete → deleteWordBackward, Ctrl+U → deleteEntireSoftLine.
  * The one deliberate absentee is deleteContentBackward — plain backspace
- * keeps its dedicated path (planRichBackspace symbol tunneling and the
- * structural block-start cases). The direction tag drives a single rule:
+ * keeps its dedicated path (taken over at keydown, with the beforeinput
+ * branch as soft-keyboard fallback: planRichBackspace symbol tunneling
+ * and the structural block-start cases). The direction tag drives a
+ * single rule:
  * a backward range that crosses into the previous block is re-dispatched
  * to those backspace-at-block-start semantics instead of being flattened
  * into a raw text merge.
@@ -1402,6 +1404,13 @@ export class EditorController {
         }
 
         if (e.inputType === "deleteContentBackward") {
+            // Fallback path only: plain Backspace on physical keyboards is
+            // already taken over (preventDefault) at keydown, so it never
+            // reaches here. What does: soft keyboards whose keydown is the
+            // 229 sentinel, and Ctrl+H-style editing bindings that produce
+            // deleteContentBackward without a Backspace key. Kept because
+            // WebKit skips beforeinput entirely for no-op deletes — see the
+            // keydown Backspace branch for the full rationale.
             e.preventDefault();
             this.deleteInCursor_();
         } else if (RANGE_DELETE_INPUT_TYPES[e.inputType]) {
@@ -1642,7 +1651,34 @@ export class EditorController {
                         );
                     });
                     this._editorStore_.setActiveAtomicUUID_(null);
+                    break;
                 }
+                // Modifier variants (word / line deletes) need the
+                // engine-computed getTargetRanges() and stay on the
+                // beforeinput range mechanism (deleteRangeInCursor_).
+                if (e.altKey || e.metaKey || e.ctrlKey) break;
+                // During IME composition backspace belongs to the IME.
+                if (this._editorStore_.duringComposition || e.isComposing) {
+                    break;
+                }
+                // Take plain Backspace over at keydown — the primary desktop
+                // path (same policy as ProseMirror's keymap and Lexical's
+                // KEY_BACKSPACE_COMMAND). WebKit dispatches beforeinput from
+                // inside the editing command, so whenever it deems
+                // DeleteBackward a no-op (empty document; caret at the first
+                // visible position while the syntax ahead is hidden) Safari /
+                // WKWebView fire no beforeinput at all — yet the model-level
+                // backspace still has semantics there (dissolve a construct /
+                // outdent / merge). Chrome fires beforeinput unconditionally,
+                // which masked the gap. The deleteContentBackward branch in
+                // handleBeforeInput_ stays as the fallback for inputs that
+                // never produce a trustworthy Backspace keydown (soft
+                // keyboards' 229 sentinel, Ctrl+H-style bindings).
+                e.preventDefault();
+                // Mirror of handleBeforeInput_'s root-caret guard: repair a
+                // caret parked on the root node and swallow the delete.
+                if (this.normalizeRootCaret_()) break;
+                this.deleteInCursor_();
                 break;
             }
             case "Tab": {
@@ -2475,7 +2511,7 @@ export class EditorController {
                 top: editorElement?.scrollTop || 0,
                 bottom:
                     editorElement?.scrollTop +
-                        editorElement?.clientHeight || 0,
+                    editorElement?.clientHeight || 0,
             };
 
             const cursorCoords = {
@@ -2491,6 +2527,6 @@ export class EditorController {
                 editorElement.scrollTop =
                     cursorCoords.bottom - editorElement.clientHeight;
             }
-        } catch {}
+        } catch { }
     }
 }
