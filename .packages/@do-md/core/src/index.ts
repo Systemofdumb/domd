@@ -84,6 +84,9 @@ export { getSpanRenderIdProps } from "./editor/render/props/getSpanRenderIdProps
 
 // Utility exports
 export { toMarkdown } from "./editor/model/serialize/toMarkdown";
+// Every layer that binds a Mod+<letter> shortcut needs the same layout-correct
+// test, so the kernel owns it rather than each host reinventing `e.code`.
+export { matchesLetterKey } from "./editor/controller/lib/matchesLetterKey";
 
 // Batch replace primitives (AI editing / external diff reconcile)
 export type {

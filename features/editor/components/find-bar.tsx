@@ -27,7 +27,11 @@
  *   Esc                close, land the caret on the current match
  */
 
-import { useEditorDom, useEditorStoreApi } from "@do-md/core-react";
+import {
+    matchesLetterKey,
+    useEditorDom,
+    useEditorStoreApi,
+} from "@do-md/core-react";
 import {
     bindSearchPainter,
     useSearchStore,
@@ -235,7 +239,7 @@ export function FindBar() {
             const primary = mac ? e.metaKey : e.ctrlKey;
             const foreign = mac ? e.ctrlKey : e.metaKey;
             if (!primary || foreign) return;
-            if (e.code === "KeyF" && !e.shiftKey) {
+            if (matchesLetterKey(e, "f") && !e.shiftKey) {
                 if (mac && e.altKey) {
                     e.preventDefault();
                     search.openReplace();
@@ -250,13 +254,13 @@ export function FindBar() {
                 }
                 return;
             }
-            if (!mac && e.code === "KeyH" && !e.altKey && !e.shiftKey) {
+            if (!mac && matchesLetterKey(e, "h") && !e.altKey && !e.shiftKey) {
                 e.preventDefault();
                 search.openReplace();
                 refocus();
                 return;
             }
-            if (mac && e.code === "KeyG" && !e.altKey) {
+            if (mac && matchesLetterKey(e, "g") && !e.altKey) {
                 if (!search.state.open) return;
                 e.preventDefault();
                 if (e.shiftKey) search.findPrevious();

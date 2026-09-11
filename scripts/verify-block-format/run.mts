@@ -10,7 +10,7 @@
  *   node --experimental-strip-types --import ./scripts/lib/register-ts-resolve.mjs \
  *        scripts/verify-block-format/run.mts
  */
-import { EditorStore } from "@do-md/core-react";
+import { EditorStore, matchesLetterKey } from "@do-md/core-react";
 import {
     EDITOR_SHORTCUTS,
     buildPrefix,
@@ -490,10 +490,20 @@ const line = (store: { toMarkdown(): string }, index: number) =>
 
 // shortcut matching ---------------------------------------------------------
 type Mods = Partial<Record<"shiftKey" | "altKey" | "metaKey" | "ctrlKey", boolean>>;
+
+/** What a US-QWERTY board prints on the key at `code`. A real KeyboardEvent
+ *  always carries both halves, and a synthetic one that omits `key` would test
+ *  a browser that does not exist. */
+const usKey = (code: string) =>
+    /^Key([A-Z])$/.exec(code)?.[1].toLowerCase() ??
+    /^Digit([0-9])$/.exec(code)?.[1] ??
+    code;
+
 /** A keystroke with the platform's PRIMARY modifier held (⌘ on Mac, Ctrl
  *  elsewhere), so one table of expectations can be run against both. */
 const press = (code: string, mac: boolean, mods: Mods = {}) => ({
     code,
+    key: usKey(code),
     metaKey: mac,
     ctrlKey: !mac,
     shiftKey: false,
@@ -571,6 +581,55 @@ for (const mac of [true, false]) {
             { mac, disabled: HIDDEN_COMMANDS },
         ),
         null,
+    );
+}
+
+// keyboard layouts ----------------------------------------------------------
+// `KeyboardEvent.code` names a position on a US QWERTY board, so a letter
+// shortcut matched on `code` is bound to whatever letter that position carries
+// on the user's actual layout. The bug this pins: on AZERTY the key labelled W
+// reports code "KeyZ", so ⌘W ran the kernel's undo and preventDefault'd, and
+// the host's Close Window accelerator never saw the keystroke.
+{
+    const chord = (code: string, key: string) => ({ code, key });
+
+    eq("azerty: the key labelled Z is undo", matchesLetterKey(chord("KeyW", "z"), "z"), true);
+    eq("azerty: the key labelled W is NOT undo", matchesLetterKey(chord("KeyZ", "w"), "z"), false);
+    eq("azerty: the key labelled A is select-all", matchesLetterKey(chord("KeyQ", "a"), "a"), true);
+    eq("azerty: the key labelled Q is NOT select-all", matchesLetterKey(chord("KeyA", "q"), "a"), false);
+    eq("qwerty: unmoved letters still match", matchesLetterKey(chord("KeyZ", "z"), "z"), true);
+    eq("qwertz: the key labelled Z is undo", matchesLetterKey(chord("KeyY", "z"), "z"), true);
+    // Shift changes a letter's CASE, never which letter it is — the hazard that
+    // makes `code` right for digits ("9" → "(") does not exist here.
+    eq("shift+Z still matches z", matchesLetterKey(chord("KeyZ", "Z"), "z"), true);
+    // No Latin letter to compare against: position is all that is left, and an
+    // approximate binding beats none. Same story for macOS ⌥ combinations,
+    // where `key` is the composed glyph.
+    eq("arabic falls back to position", matchesLetterKey(chord("KeyZ", "ئ"), "z"), true);
+    eq("cyrillic falls back to position", matchesLetterKey(chord("KeyB", "и"), "b"), true);
+    eq("option+C falls back to position", matchesLetterKey(chord("KeyC", "ç"), "c"), true);
+    eq("dead key falls back to position", matchesLetterKey(chord("KeyA", "Dead"), "a"), true);
+
+    // The same rule has to hold one layer up, where the command registry is
+    // still written in `code` spelling. Dvorak is the sharpest case: it moves
+    // nearly every letter, so ⌘T (insertTable) arrives with code "KeyK".
+    const dvorak = (code: string, key: string) =>
+        matchCommandShortcut(
+            { ...press(code, true), key },
+            { mac: true, disabled: HIDDEN_COMMANDS },
+        );
+    eq("dvorak: the key labelled T inserts a table", dvorak("KeyK", "t"), "insertTable");
+    eq("dvorak: the key labelled Y does not", dvorak("KeyT", "y"), null);
+    eq("dvorak: the key labelled B is bold", dvorak("KeyN", "b"), "bold");
+    // Digits stay positional: with Shift, `key` is "(" on US and something else
+    // again elsewhere, while the code holds still.
+    eq(
+        "shift+9 is blockQuote by position",
+        matchCommandShortcut(
+            { ...press("Digit9", true, { shiftKey: true }), key: "(" },
+            { mac: true, disabled: HIDDEN_COMMANDS },
+        ),
+        "blockQuote",
     );
 }
 

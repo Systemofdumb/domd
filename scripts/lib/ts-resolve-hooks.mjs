@@ -55,9 +55,19 @@ export async function resolve(specifier, context, nextResolve) {
     // Other workspace packages are copied into `.packages/` as source under
     // their own name; anything not found there falls through untouched — hence
     // the existence check rather than a blanket rewrite.
+    //
+    // Two directory shapes, both spelled out in tsconfig `paths`: the small
+    // libraries sit directly at `.packages/@do-md/<name>`, while the editor
+    // plugins nest one level deeper with their own `src` (`@do-md/commands` →
+    // `.packages/@do-md/plugins/commands/src`). Trying only the flat shape left
+    // every plugin unresolvable, so any harness importing one died at import.
     if (specifier.startsWith("@do-md/")) {
-        const dir = resolvePath(ROOT, ".packages", specifier);
-        if (existsSync(dir)) {
+        const name = specifier.slice("@do-md/".length);
+        const dir = [
+            resolvePath(ROOT, ".packages", specifier),
+            resolvePath(ROOT, ".packages/@do-md/plugins", name, "src"),
+        ].find((candidate) => existsSync(candidate));
+        if (dir) {
             return tryCandidates(
                 pathToFileURL(dir).href,
                 context,

@@ -29,6 +29,7 @@ import { getDomByCursor } from "./lib/getDomByCursor";
 import { getRenderDomByID } from "./lib/getRenderDomByID";
 import { commandKey } from "./lib/commandKey";
 import { matchesNewlineKey } from "./lib/matchesNewlineKey";
+import { matchesLetterKey } from "./lib/matchesLetterKey";
 
 /** beforeinput format* inputTypes we take over and map to an inline mark. */
 const FORMAT_INPUT_TYPES: Record<string, InlineFormatMark> = {
@@ -1547,7 +1548,7 @@ export class EditorController {
         // by the commands layer or by the host application.
 
         // undo/redo
-        if ((e.metaKey || e.ctrlKey) && e.code === "KeyZ") {
+        if ((e.metaKey || e.ctrlKey) && matchesLetterKey(e, "z")) {
             e.preventDefault();
             if (this._editorStore_.duringComposition) {
                 return;
@@ -1579,7 +1580,7 @@ export class EditorController {
         // Known gap: the mobile long-press menu's "Select All" does not go through
         // keydown, so it does not enter the terminal state yet (left as is until we
         // can observe the real path and settle on an inference rule).
-        if ((e.metaKey || e.ctrlKey) && e.code === "KeyA") {
+        if ((e.metaKey || e.ctrlKey) && matchesLetterKey(e, "a")) {
             this._editorStore_.applyPendingText_();
             this._editorStore_.setSelectAll_();
         }
