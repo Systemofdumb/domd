@@ -164,6 +164,19 @@ function TitlebarBridge({
         storeApi?.blur();
     });
 
+    // Edit menu → the KERNEL's commands.
+    //
+    // These were PredefinedMenuItems, which carry the standard key
+    // equivalents: macOS claimed ⌘Z / ⇧⌘Z / ⌘A and sent undo:/selectAll:
+    // down the responder chain, where WKWebView ran its own native editing
+    // command. The kernel binds undo/redo/select-all on the editable root and
+    // never saw the keystroke, so both the shortcuts and the menu entries did
+    // nothing. Routing them here makes the menu drive the same commands the
+    // keyboard does.
+    useTauriEvent("menu-undo", () => storeApi?.undo());
+    useTauriEvent("menu-redo", () => storeApi?.redo());
+    useTauriEvent("menu-select-all", () => storeApi?.setSelectAll_());
+
     useTauriEvent("titlebar-insert-table", () =>
         runEditorAction("insert-table", () => insertTable(storeApi)),
     );

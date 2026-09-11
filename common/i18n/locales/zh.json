@@ -17,7 +17,10 @@
         "save": "保存",
         "installCli": "安装 'domd-cli' 命令到 PATH",
         "file": "文件",
-        "edit": "编辑"
+        "edit": "编辑",
+        "undo": "撤销",
+        "redo": "重做",
+        "selectAll": "全选"
     },
     "nav": {
         "editor": "编辑器",

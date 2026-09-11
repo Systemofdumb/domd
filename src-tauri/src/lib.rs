@@ -181,19 +181,50 @@ fn build_app_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
     )?;
 
     // Edit menu — required on macOS for Cmd+C/X/V/A to work in WebView. The
+    let undo_item = MenuItem::with_id(
+        manager,
+        "undo",
+        menu_i18n::t(locale, "menu.undo"),
+        true,
+        Some("CmdOrCtrl+Z"),
+    )?;
+    let redo_item = MenuItem::with_id(
+        manager,
+        "redo",
+        menu_i18n::t(locale, "menu.redo"),
+        true,
+        Some("CmdOrCtrl+Shift+Z"),
+    )?;
+    let select_all_item = MenuItem::with_id(
+        manager,
+        "select-all",
+        menu_i18n::t(locale, "menu.selectAll"),
+        true,
+        Some("CmdOrCtrl+A"),
+    )?;
+
     // Cut/Copy/Paste/… predefined items are auto-localized by macOS.
     let edit_menu = Submenu::with_items(
         manager,
         &menu_i18n::t(locale, "menu.edit"),
         true,
         &[
-            &PredefinedMenuItem::undo(manager, None)?,
-            &PredefinedMenuItem::redo(manager, None)?,
+            // Undo / redo / select-all are the KERNEL's, not the responder
+            // chain's. The predefined items carry the standard key
+            // equivalents, so macOS claimed Cmd+Z / Cmd+Shift+Z / Cmd+A and
+            // sent undo:/selectAll: down the responder chain, where WKWebView
+            // ran its own native editing command — the editor's model never
+            // saw the keystroke, and the menu entries did nothing. Custom
+            // items instead, dispatched to the frontend like Save and Open
+            // URL already are, so the menu drives the same commands the
+            // kernel binds on the editable root.
+            &undo_item,
+            &redo_item,
             &PredefinedMenuItem::separator(manager)?,
             &PredefinedMenuItem::cut(manager, None)?,
             &PredefinedMenuItem::copy(manager, None)?,
             &PredefinedMenuItem::paste(manager, None)?,
-            &PredefinedMenuItem::select_all(manager, None)?,
+            &select_all_item,
         ],
     )?;
 
@@ -1334,6 +1365,20 @@ pub fn run() {
                         w.is_focused().unwrap_or(false)
                     }) {
                         let _ = win.close();
+                    }
+                } else if event.id() == "undo"
+                    || event.id() == "redo"
+                    || event.id() == "select-all"
+                {
+                    if let Some(win) = app.webview_windows().values().find(|w| {
+                        w.is_focused().unwrap_or(false)
+                    }) {
+                        let event_name = match event.id().0.as_str() {
+                            "undo" => "menu-undo",
+                            "redo" => "menu-redo",
+                            _ => "menu-select-all",
+                        };
+                        let _ = win.emit_to(win.label(), event_name, ());
                     }
                 } else if event.id() == "save" {
                     if let Some(win) = app.webview_windows().values().find(|w| {
