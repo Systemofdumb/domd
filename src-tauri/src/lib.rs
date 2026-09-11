@@ -214,10 +214,32 @@ fn get_system_locale() -> String {
 #[tauri::command]
 fn set_locale(app: AppHandle, locale: String) -> Result<(), String> {
     let normalized = menu_i18n::normalize(&locale);
+    // Rebuild ONLY on a real language change. The webview invokes this on
+    // every launch to align the menu with its own locale, which is normally
+    // the locale the menu was already built with in `setup` — so the default
+    // path used to replace the whole menu bar with an identical one.
+    //
+    // That is not free on macOS: the discarded menu's items keep their key
+    // equivalents registered, so a keystroke can be delivered to an item of a
+    // menu that is no longer on screen. Observed as Cmd+W triggering Undo
+    // while File > Close Window still worked, and as the pairing shifting
+    // between launches — the give-away that two menus were live at once.
+    if *MENU_LOCALE.lock().unwrap() == Some(normalized) {
+        return Ok(());
+    }
     let menu = build_app_menu(&app, normalized).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
+    // Recorded only once the swap succeeded. A failed rebuild must not leave the
+    // cache claiming a locale the menu bar is not built for: the guard is an
+    // exact match, so the retry the next window would make becomes a no-op and
+    // the menu stays stranded in the old language until the app restarts.
+    *MENU_LOCALE.lock().unwrap() = Some(normalized);
     Ok(())
 }
+
+/// Locale the native menu bar is currently built for. Guards the rebuild in
+/// `set_locale` so an unchanged locale does not swap the menu for a copy.
+static MENU_LOCALE: Mutex<Option<&'static str>> = Mutex::new(None);
 
 // ── macOS app icon ───────────────────────────────────────────────────────────
 //
@@ -1299,8 +1321,10 @@ pub fn run() {
             // Built for the OS locale; the webview re-invokes `set_locale` to
             // rebuild it whenever the in-app language changes. App menu (DOMD)
             // owns About + Check for Updates (conventional macOS spot).
-            let menu = build_app_menu(app, menu_i18n::system_locale())?;
+            let startup_locale = menu_i18n::system_locale();
+            let menu = build_app_menu(app, startup_locale)?;
             app.set_menu(menu)?;
+            *MENU_LOCALE.lock().unwrap() = Some(startup_locale);
 
             app.on_menu_event(|app, event| {
                 if event.id() == "new-window" {
