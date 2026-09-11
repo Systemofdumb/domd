@@ -224,21 +224,22 @@ fn set_locale(app: AppHandle, locale: String) -> Result<(), String> {
     // menu that is no longer on screen. Observed as Cmd+W triggering Undo
     // while File > Close Window still worked, and as the pairing shifting
     // between launches — the give-away that two menus were live at once.
-    {
-        let mut current = MENU_LOCALE.lock().unwrap();
-        if current.as_deref() == Some(normalized) {
-            return Ok(());
-        }
-        *current = Some(normalized.to_string());
+    if *MENU_LOCALE.lock().unwrap() == Some(normalized) {
+        return Ok(());
     }
     let menu = build_app_menu(&app, normalized).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
+    // Recorded only once the swap succeeded. A failed rebuild must not leave the
+    // cache claiming a locale the menu bar is not built for: the guard is an
+    // exact match, so the retry the next window would make becomes a no-op and
+    // the menu stays stranded in the old language until the app restarts.
+    *MENU_LOCALE.lock().unwrap() = Some(normalized);
     Ok(())
 }
 
 /// Locale the native menu bar is currently built for. Guards the rebuild in
 /// `set_locale` so an unchanged locale does not swap the menu for a copy.
-static MENU_LOCALE: Mutex<Option<String>> = Mutex::new(None);
+static MENU_LOCALE: Mutex<Option<&'static str>> = Mutex::new(None);
 
 // ── macOS app icon ───────────────────────────────────────────────────────────
 //
@@ -1321,9 +1322,9 @@ pub fn run() {
             // rebuild it whenever the in-app language changes. App menu (DOMD)
             // owns About + Check for Updates (conventional macOS spot).
             let startup_locale = menu_i18n::system_locale();
-            *MENU_LOCALE.lock().unwrap() = Some(startup_locale.to_string());
             let menu = build_app_menu(app, startup_locale)?;
             app.set_menu(menu)?;
+            *MENU_LOCALE.lock().unwrap() = Some(startup_locale);
 
             app.on_menu_event(|app, event| {
                 if event.id() == "new-window" {
