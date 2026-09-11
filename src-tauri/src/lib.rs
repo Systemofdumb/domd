@@ -186,21 +186,21 @@ fn build_app_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
         "undo",
         menu_i18n::t(locale, "menu.undo"),
         true,
-        Some("Cmd+Z"),
+        Some("CmdOrCtrl+Z"),
     )?;
     let redo_item = MenuItem::with_id(
         manager,
         "redo",
         menu_i18n::t(locale, "menu.redo"),
         true,
-        Some("Cmd+Shift+Z"),
+        Some("CmdOrCtrl+Shift+Z"),
     )?;
     let select_all_item = MenuItem::with_id(
         manager,
         "select-all",
         menu_i18n::t(locale, "menu.selectAll"),
         true,
-        Some("Cmd+A"),
+        Some("CmdOrCtrl+A"),
     )?;
 
     // Cut/Copy/Paste/… predefined items are auto-localized by macOS.
