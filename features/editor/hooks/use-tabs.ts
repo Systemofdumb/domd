@@ -64,6 +64,27 @@ export function useTabs({
     );
 
     // ── Opening documents into tabs ──────────────────────────────────────
+    /** Tell Rust the requested document is now the one an `insert` would hit.
+     *
+     *  `open_or_reuse` clears WindowReady before routing a file to this window,
+     *  because the window is about to show a different document and an
+     *  immediate `insert` must not land in the previous one. Something has to
+     *  re-arm it, and until tabs that was the editor remount.
+     *
+     *  Neither route can rely on a remount any more. Reusing the lone blank tab
+     *  resets the runtime in place, precisely so view state survives; and
+     *  activating a background tab is a switch Rust cannot tell apart from
+     *  re-activating the tab already showing, where clearing readiness with
+     *  nothing to restore it would leave the CLI waiting for a mark that never
+     *  comes. So readiness is asserted by the host, from the one layer that
+     *  knows the document is in place — and asserted on EVERY route, including
+     *  the one where nothing changed. */
+    const markReady = async () => {
+        if (!isTauri()) return;
+        const { invoke } = await tauriCore();
+        await invoke("benchmark_mark_ready").catch(() => {});
+    };
+
     /** Reuse the lone untouched blank tab if that is all the window has —
      *  opening a file from Finder should not leave an empty tab behind.
      *  (useTauriEvent ref-stores its handler, so this closure is always the
@@ -75,20 +96,7 @@ export function useTabs({
         } else {
             store.addTab(doc.meta, doc.content);
         }
-        // Re-arm readiness for the CLI.
-        //
-        // `open_or_reuse` clears WindowReady before routing a file here,
-        // because the window is about to show a different document and an
-        // immediate `insert` must not land in the previous one. That relies on
-        // something re-marking it, and until now the editor remount did.
-        //
-        // Reusing the lone blank tab no longer remounts anything: the runtime
-        // is reset in place precisely so view state survives. So the tab layer
-        // has to say when the document is actually in place — it is the only
-        // party that knows, and it is true for both branches above.
-        if (!isTauri()) return;
-        const { invoke } = await tauriCore();
-        await invoke("benchmark_mark_ready").catch(() => {});
+        await markReady();
     };
 
     useTauriEvent<string>("open-file-in-tab", (path) => {
@@ -97,7 +105,11 @@ export function useTabs({
 
     useTauriEvent<string>("activate-tab", (path) => {
         const tab = store.findTabByPath(path);
+        // Mark ready even when the tab was already active: `activateTab` is a
+        // no-op there, but Rust cleared readiness on the way in and this is the
+        // only thing that will put it back.
         if (tab) store.activateTab(tab.id);
+        void markReady();
     });
 
     useTauriEvent("menu-new-tab", () => {

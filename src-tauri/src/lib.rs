@@ -1093,6 +1093,15 @@ pub(crate) fn open_or_reuse(app: &AppHandle, path: String) -> OpenOutcome {
                 let _ = win.unminimize();
             }
             let _ = win.set_focus();
+            // Same reasoning as the open-file-in-tab route below: the window
+            // is about to show a DIFFERENT document, so readiness has to drop
+            // or an immediate `insert` lands in the tab that is on screen now.
+            // This route could not clear it before, because Rust cannot tell
+            // "switch to a background tab" from "re-activate the tab already
+            // showing" — and clearing in the second case left the CLI waiting
+            // for a mark no remount would ever produce. The frontend now
+            // asserts readiness on both, so clearing here is safe.
+            app.state::<WindowReady>().remove(&label);
             let _ = app.emit_to(label.as_str(), "activate-tab", &path);
             return OpenOutcome {
                 window_id: label,
@@ -1116,6 +1125,8 @@ pub(crate) fn open_or_reuse(app: &AppHandle, path: String) -> OpenOutcome {
                 let _ = win.unminimize();
             }
             let _ = win.set_focus();
+            // Readiness drops here too — see the tab-registry route above.
+            app.state::<WindowReady>().remove(&label);
             let _ = app.emit_to(label.as_str(), "activate-tab", &path);
             return OpenOutcome {
                 window_id: label,
