@@ -1167,6 +1167,23 @@ pub(crate) fn open_or_reuse(app: &AppHandle, path: String) -> OpenOutcome {
         .or_else(|| labels.last().cloned());
 
     if let Some(label) = target_label {
+        // Record the window's assigned document BEFORE emitting.
+        //
+        // The event alone is not enough on a cold start. A Finder open of a
+        // `.md` launches the app, `setup` creates an empty window, and
+        // RunEvent::Opened lands here while the webview is still booting — so
+        // the emit can arrive before anything is listening. The frontend's
+        // first act is to ask `get_my_path` for the document this window is
+        // meant to show, and with no entry here that returns null and the
+        // window blanks itself. Writing it first means the answer is waiting
+        // whether or not the event was heard, which is how the one-document
+        // build has always worked.
+        app.state::<WindowFiles>()
+            .0
+            .lock()
+            .unwrap()
+            .insert(label.clone(), path.clone());
+
         // The window is about to display a DIFFERENT document, so it is no
         // longer ready in the sense the CLI cares about. `benchmark_mark_ready`
         // fires on every editor mount, not just the first, and routing a file
